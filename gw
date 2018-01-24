@@ -1,0 +1,55 @@
+#!/usr/bin/env python
+"""
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+  Ontology Engineering Group
+        http://www.oeg-upm.net/
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+  Copyright (C) 2017 Ontology Engineering Group.
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+            http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+"""
+
+import os
+import multiprocessing
+from agora_gw import LOG_LEVEL
+from agora import Agora, setup_logging
+import gunicorn.app.base
+
+setup_logging(LOG_LEVEL)
+
+from agora_gw.server.worker import number_of_workers
+from agora_gw.server.app import Application
+
+REQUEST_TIMEOUT = int(os.environ.get('REQUEST_TIMEOUT', 300))
+API_PORT = int(os.environ.get('API_PORT', 8000))
+
+__author__ = 'Fernando Serena'
+
+
+if __name__ == '__main__':
+    try:
+        options = {
+            'bind': '%s:%s' % ('0.0.0.0', str(API_PORT)),
+            'workers': number_of_workers(),
+            'workerconnections': 1000,
+            'timeout': REQUEST_TIMEOUT,
+            'errorlog': '-',
+            'accesslog': '-'
+        }
+        Application(options).run()
+    except (KeyboardInterrupt, SystemExit, SystemError):
+        pass
+    finally:
+        Agora.close()
+
