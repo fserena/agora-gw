@@ -242,24 +242,43 @@ def get_graph(gid, **kwargs):
     return deskolem
 
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    index = 0
+    chunk = []
+    for t in l:
+        if index < n:
+            chunk.append(t)
+            index +=1
+        else:
+            yield chunk
+            chunk = []
+            index = 0
+
+    if chunk:
+        yield chunk
+
+
 def store_graph(g, gid=None, delete=True):
     q_tmpl = u"""    
     INSERT DATA
     { GRAPH <%s> { %s } }
     """
     gid = gid or g.identifier
-
+    log.debug('Storing graph {}...'.format(gid))
     if delete:
         update(u"""
         DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s ?p ?o }
         """ % gid)
 
     skolem = skolemize(g)
-    all_triples_str = u' . '.join(map(lambda (s, p, o): u'{} {} {}'.format(s.n3(), p.n3(), o.n3()), skolem))
-    try:
-        update(q_tmpl % (gid, all_triples_str))
-    except Exception as e:
-        log.warn(e.message)
+    sk_chunks = chunks(skolem, 10)
+    for chunk in sk_chunks:
+        all_triples_str = u' . '.join(map(lambda (s, p, o): u'{} {} {}'.format(s.n3(), p.n3(), o.n3()), chunk))
+        try:
+            update(q_tmpl % (gid, all_triples_str))
+        except Exception as e:
+            log.warn(e.message)
 
 
 def delete_graph(gid):
