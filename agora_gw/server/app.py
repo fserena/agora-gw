@@ -34,7 +34,7 @@ __author__ = 'Fernando Serena'
 
 class Application(BaseApplication):
     def init(self, **kwargs):
-        setup_logging(LOG_LEVEL)
+        # setup_logging(LOG_LEVEL)
         if self.default_app is None:
             self.default_app = build(__name__)
 
