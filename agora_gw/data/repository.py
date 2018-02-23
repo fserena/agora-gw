@@ -99,7 +99,7 @@ def query(q, cache=True, infer=True, expire=DEFAULT_EXPIRY, namespace=None):
         sparql.setRequestMethod("postdirectly")
         sparql.setMethod('POST')
 
-        # log.debug(u'Querying: {}'.format(q))
+        log.debug(u'Querying: {}'.format(q))
         sparql.setQuery(q)
 
         sparql.addCustomParameter('infer', str(infer).lower())
@@ -246,17 +246,17 @@ def chunks(l, n):
     """Yield successive n-sized chunks from l."""
     index = 0
     chunk = []
-    for t in l:
+    for t in l.triples((None, None, None)):
         if index < n:
             chunk.append(t)
-            index +=1
+            index += 1
         else:
-            yield chunk
+            yield chunk[:]
             chunk = []
             index = 0
 
     if chunk:
-        yield chunk
+        yield chunk[:]
 
 
 def store_graph(g, gid=None, delete=True):
@@ -272,13 +272,16 @@ def store_graph(g, gid=None, delete=True):
         """ % gid)
 
     skolem = skolemize(g)
-    sk_chunks = chunks(skolem, 10)
-    for chunk in sk_chunks:
+    for chunk in chunks(skolem, 50):
         all_triples_str = u' . '.join(map(lambda (s, p, o): u'{} {} {}'.format(s.n3(), p.n3(), o.n3()), chunk))
+        query = q_tmpl % (gid, all_triples_str)
         try:
-            update(q_tmpl % (gid, all_triples_str))
+            update(query)
         except Exception as e:
+            print query
             log.warn(e.message)
+
+
 
 
 def delete_graph(gid):
