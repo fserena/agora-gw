@@ -71,7 +71,11 @@ def get_td_node(id):
             core:identifier ?id
         FILTER(STR(?id)="%s")
     }""" % str(id))
-    return URIRef(res.pop()['td']['value'])
+
+    try:
+        return URIRef(res.pop()['td']['value'])
+    except IndexError:
+        log.warn('No TD for identifier {}'.format(id))
 
 
 def get_th_node(id):
@@ -83,7 +87,11 @@ def get_th_node(id):
             core:describes ?th
         FILTER(STR(?id)="%s")
     }""" % str(id))
-    return URIRef(res.pop()['th']['value'])
+
+    try:
+        return URIRef(res.pop()['th']['value'])
+    except IndexError:
+        log.warn('No thing for TD identifier {}'.format(id))
 
 
 def get_th_nodes(cache=True):
@@ -254,7 +262,7 @@ def _sync_VTED():
 
 def sync_VTED(force=False):
     ts = now()
-    if force or META['ts'] is None or ts - _sync_VTED() > 300:
+    if force or ts - _sync_VTED() > 300 or META['ts'] is None:
         log.info('[{}] Syncing VTED...'.format(ts))
         META['network'] = VTED._network(cache=not force)
         META['roots'] = VTED._roots(cache=not force)
@@ -265,14 +273,15 @@ def sync_VTED(force=False):
 def get_td_ids(cache=True):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
-    SELECT DISTINCT ?g ?id WHERE {
+    SELECT DISTINCT ?g ?id ?th WHERE {
         GRAPH ?g {
            [] a core:ThingDescription ;
-              core:identifier ?id
+              core:identifier ?id ;
+              core:describes ?th
         }
     }""", cache=cache, infer=False, expire=300)
 
-    return map(lambda r: (r['g']['value'], r['id']['value']), res)
+    return map(lambda r: (r['g']['value'], r['id']['value'], r['th']['value']), res)
 
 
 def get_resource_transforms(td, cache=True):
@@ -281,33 +290,17 @@ def get_resource_transforms(td, cache=True):
     SELECT DISTINCT ?t FROM <%s> WHERE {                        
        [] map:valuesTransformedBy ?t            
     }""" % td, cache=cache, infer=False, expire=300, namespace='network')
-
-    transforms = map(lambda r: r['t']['value'], res)
-    for t in transforms:
-        res = R.query("""
-        PREFIX core: <http://iot.linkeddata.es/def/core#>
-        ASK { <%s> a core:ThingDescription }""" % t, cache=True, infer=False, namespace='network')
-        if res:
-            yield t
+    return map(lambda r: r['t']['value'], res)
 
 
-def get_thing_td_links(th, cache=True):
+def get_thing_links(th, cache=True):
     res = R.query("""
     SELECT DISTINCT ?o FROM <%s> WHERE {
       [] ?p ?o
       FILTER(isURI(?o))
     }
     """ % th, cache=cache, namespace='network')
-    uri_objects = map(lambda r: r['o']['value'], res)
-    for o in uri_objects:
-        res = R.query("""
-                PREFIX core: <http://iot.linkeddata.es/def/core#>
-                SELECT DISTINCT ?t WHERE {
-                  ?t a core:ThingDescription ;
-                     core:describes <%s>                 
-                }""" % o, cache=cache, infer=False, namespace='network')
-        if res:
-            yield res.pop()['t']['value']
+    return map(lambda r: r['o']['value'], res)
 
 
 def get_td_thing(td_uri):
@@ -317,7 +310,10 @@ def get_td_thing(td_uri):
               <%s> a core:ThingDescription ;
                  core:describes ?th                 
             }""" % td_uri, cache=True, infer=False)
-    return res.pop()['th']['value']
+    try:
+        return res.pop()['th']['value']
+    except IndexError:
+        log.warn('No described thing for TD {}'.format(td_uri))
 
 
 def get_th_types(th_uri, **kwargs):
@@ -355,15 +351,22 @@ class VTED_type(type):
 
     def _network(cls, cache=True):
         network = nx.DiGraph()
-        td_ids_dict = dict(get_td_ids(cache=cache))
+        td_th_ids = get_td_ids(cache=cache)
+        td_ids_dict = dict(map(lambda x: (x[0], x[1]), td_th_ids))
+        td_th_dict = dict(map(lambda x: (x[0], x[2]), td_th_ids))
+        th_td_dict = dict(map(lambda x: (x[2], x[0]), td_th_ids))
+        all_tds = map(lambda x: x[0], td_th_ids)
         for td, id in td_ids_dict.items():
             network.add_node(id)
 
-            for linked_td in get_resource_transforms(td, cache=cache):
+            td_transforms = filter(lambda x: x in all_tds, get_resource_transforms(td, cache=cache))
+            for linked_td in td_transforms:
                 network.add_edge(id, td_ids_dict[linked_td])
 
-            th = get_td_thing(td)
-            for linked_td in get_thing_td_links(th, cache=cache):
+            th = td_th_dict[td]
+            thing_td_links = map(lambda x: th_td_dict[x],
+                                 filter(lambda x: x in th_td_dict, get_thing_links(th, cache=cache)))
+            for linked_td in thing_td_links:
                 network.add_edge(id, td_ids_dict[linked_td])
 
         return network
