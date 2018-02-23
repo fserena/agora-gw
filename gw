@@ -41,7 +41,7 @@ if __name__ == '__main__':
     try:
         options = {
             'bind': '%s:%s' % ('0.0.0.0', str(API_PORT)),
-            'workers': 1,   #number_of_workers(),
+            'workers': number_of_workers(),
             'workerconnections': 1000,
             'timeout': REQUEST_TIMEOUT,
             'errorlog': '-',
