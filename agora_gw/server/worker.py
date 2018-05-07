@@ -28,7 +28,6 @@ from agora.server.planner import build as bp
 from gunicorn.workers.sync import SyncWorker
 from rdflib import Graph
 
-from agora_gw.data import R
 from agora_gw.server.dispatch import Dispatcher
 
 __author__ = 'Fernando Serena'
@@ -40,12 +39,10 @@ def number_of_workers():
 
 _lock = Lock()
 
-agora_app = bn(R.agora.fountain, import_name=__name__)
-bp(R.agora.planner, server=agora_app)
-
 
 class Worker(SyncWorker):
     def __init__(self, *args, **kwargs):
+        self.agora_app = None
         list(Graph().query('SELECT * WHERE {}'))
         super(Worker, self).__init__(*args, **kwargs)
 
@@ -70,6 +67,9 @@ class Worker(SyncWorker):
     def create_sub_app(self):
         def creator(environ):
             with _lock:
-                return agora_app
+                if self.agora_app is None:
+                    self.agora_app = bn(self.app.gw.repository.agora.fountain, import_name=__name__)
+                    bp(self.app.gw.repository.agora.planner, server=self.agora_app)
+                return self.agora_app
 
         return creator

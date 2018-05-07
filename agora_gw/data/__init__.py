@@ -23,4 +23,3 @@ __author__ = 'Fernando Serena'
 
 from agora_gw.data.repository import Repository
 
-R = Repository()

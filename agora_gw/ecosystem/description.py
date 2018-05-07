@@ -20,6 +20,7 @@
 """
 import calendar
 import logging
+import os
 from collections import defaultdict
 from datetime import datetime
 from multiprocessing import Lock
@@ -30,10 +31,10 @@ from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
 from rdflib import BNode, URIRef, Graph, RDF, RDFS
-from redis_cache import cache_it
+from redis_cache import cache_it, SimpleCache
 
-from agora_gw.data import R
-from agora_gw.data.repository import CORE, canonize_node, query_cache
+from agora_gw.data.graph import canonize_node
+from agora_gw.data.repository import CORE
 
 __author__ = 'Fernando Serena'
 
@@ -42,8 +43,14 @@ lock = Lock()
 
 log = logging.getLogger('agora.gateway.description')
 
+QUERY_CACHE_HOST = os.environ.get('QUERY_CACHE_HOST', 'localhost')
+QUERY_CACHE_NUMBER = int(os.environ.get('QUERY_CACHE_NUMBER', 8))
 
-def get_context():
+cache = SimpleCache(limit=10000, expire=60 * 60, hashkeys=True, host=QUERY_CACHE_HOST, port=6379,
+                    db=QUERY_CACHE_NUMBER, namespace='desc')
+
+
+def get_context(R):
     def wrapper(uri):
         g = R.pull(uri, cache=True, infer=False, expire=300)
         if not g:
@@ -53,7 +60,7 @@ def get_context():
     return wrapper
 
 
-def get_td_nodes(cache=True):
+def get_td_nodes(R, cache=True):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT DISTINCT ?td WHERE {
@@ -63,7 +70,7 @@ def get_td_nodes(cache=True):
     return map(lambda r: r['td']['value'], res)
 
 
-def get_td_node(id):
+def get_td_node(R, id):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT ?td WHERE {
@@ -78,7 +85,7 @@ def get_td_node(id):
         log.warn('No TD for identifier {}'.format(id))
 
 
-def get_th_node(id):
+def get_th_node(R, id):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT ?th WHERE {
@@ -94,7 +101,7 @@ def get_th_node(id):
         log.warn('No thing for TD identifier {}'.format(id))
 
 
-def get_th_nodes(cache=True):
+def get_th_nodes(R, cache=True):
     res = R.query("""
        PREFIX core: <http://iot.linkeddata.es/def/core#>
        SELECT DISTINCT ?th WHERE {
@@ -105,7 +112,7 @@ def get_th_nodes(cache=True):
     return map(lambda r: r['th']['value'], res)
 
 
-def is_root(th_uri):
+def is_root(R, th_uri):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     ASK {
@@ -117,20 +124,21 @@ def is_root(th_uri):
     return res
 
 
-def create_TD_from(td_uri, node_map):
+def create_TD_from(R, td_uri, node_map, lazy=True, **kwargs):
     td_uri = URIRef(td_uri)
 
     if td_uri in node_map:
         return node_map[td_uri]
 
     log.debug('Creating TD for {}...'.format(td_uri))
-    th_uri = get_td_thing(td_uri)
+    th_uri = get_td_thing(R, td_uri)
     g = R.pull(th_uri, cache=True, infer=False, expire=300)
     g.__iadd__(R.pull(td_uri, cache=True, infer=False, expire=300))
-    return TD.from_graph(g, node=URIRef(td_uri), node_map=node_map)
+
+    return TD.from_graph(g, node=URIRef(td_uri), node_map=node_map, fetch=not lazy, **kwargs)
 
 
-def get_matching_TD(th_uri, node_map={}):
+def get_matching_TD(R, th_uri, node_map={}, **kwargs):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT DISTINCT ?g WHERE {
@@ -140,29 +148,32 @@ def get_matching_TD(th_uri, node_map={}):
         }
     }""" % th_uri, cache=True, infer=False, expire=300)
     td_uri = res.pop()['g']['value']
-    return create_TD_from(td_uri, node_map)
+    return create_TD_from(R, td_uri, node_map, **kwargs)
 
 
-def build_component(id, node_map=None):
+def build_component(R, VTED, id, node_map=None, lazy=True):
     if node_map is None:
         node_map = {}
     uri = URIRef(id)
     suc_tds = []
 
+    loader = None if lazy else R.pull
+
     try:
-        matching_td = get_matching_TD(uri, node_map)
+        matching_td = get_matching_TD(R, uri, node_map, loader=loader, lazy=lazy)
         network = VTED.network
-        if not is_root(id):
+        if not is_root(R, id):
             roots = filter(lambda (th, td): th and td, VTED.roots)
             for th_uri, td_uri in roots:
-                root = create_TD_from(td_uri, node_map=node_map)
+                root = create_TD_from(R, td_uri, node_map=node_map, lazy=lazy, loader=loader)
                 try:
                     root_paths = nx.all_simple_paths(network, root.id, matching_td.id)
                     for root_path in root_paths:
                         root_path = root_path[1:]
                         suc_tds = []
                         for suc_td_id in root_path:
-                            suc_td = create_TD_from(get_td_node(suc_td_id), node_map=node_map)
+                            suc_td = create_TD_from(R, get_td_node(R, suc_td_id), node_map=node_map, lazy=lazy,
+                                                    loader=loader)
                             if suc_td not in suc_tds:
                                 suc_tds.append(suc_td)
                         yield root, suc_tds
@@ -171,6 +182,12 @@ def build_component(id, node_map=None):
                 except nx.NodeNotFound:
                     pass
         else:
+            if not lazy:
+                suc_td_ids = reduce(lambda x, y: x.union(set(y)), list(nx.dfs_edges(network, matching_td.id)), set())
+                for suc_td_id in suc_td_ids:
+                    suc_td = create_TD_from(R, get_td_node(R, suc_td_id), node_map=node_map, lazy=lazy, loader=loader)
+                    if suc_td not in suc_tds:
+                        suc_tds.append(suc_td)
             yield matching_td, suc_tds
     except IndexError:
         graph = R.pull(uri)
@@ -192,15 +209,20 @@ def build_TED(root_paths):
     return ted
 
 
-def learn_descriptions_from(desc_g):
+def learn_descriptions_from(R, desc_g):
     virtual_eco_node = BNode()
-    desc_g.add((virtual_eco_node, RDF.type, CORE.Ecosystem))
     td_nodes = list(desc_g.subjects(RDF.type, CORE.ThingDescription))
-    for td_node in td_nodes:
+    for td_node in filter(lambda t: not list(desc_g.triples((None, None, t))), td_nodes):
         th_node = list(desc_g.objects(td_node, CORE.describes)).pop()
         desc_g.add((virtual_eco_node, CORE.hasComponent, th_node))
 
-    eco = Ecosystem.from_graph(desc_g, loader=get_context())
+    candidate_th_nodes = set(desc_g.subjects(RDF.type)).difference(td_nodes)
+    for cand_th_node in candidate_th_nodes:
+        if not list(desc_g.triples((None, None, cand_th_node))):
+            desc_g.add((virtual_eco_node, CORE.hasComponent, cand_th_node))
+
+    desc_g.add((virtual_eco_node, RDF.type, CORE.Ecosystem))
+    eco = Ecosystem.from_graph(desc_g, loader=get_context(R))
     g = eco.to_graph()
 
     node_map = {}
@@ -211,7 +233,7 @@ def learn_descriptions_from(desc_g):
             skolem_id = list(g.objects(td_node, CORE.identifier)).pop()
         except IndexError:
             skolem_id = None
-        g = canonize_node(g, td_node, id='descriptions/{}'.format(skolem_id))
+        g = canonize_node(g, td_node, R.base, id='descriptions/{}'.format(skolem_id))
 
     tdh_nodes = g.subject_objects(predicate=CORE.describes)
     for td_node, th_node in tdh_nodes:
@@ -219,7 +241,7 @@ def learn_descriptions_from(desc_g):
             skolem_id = list(g.objects(td_node, CORE.identifier)).pop()
         except IndexError:
             skolem_id = None
-        g = canonize_node(g, th_node, id='things/{}'.format(skolem_id))
+        g = canonize_node(g, th_node, R.base, id='things/{}'.format(skolem_id))
 
     td_nodes = g.subjects(RDF.type, CORE.ThingDescription)
     for node in td_nodes:
@@ -255,22 +277,12 @@ def now():
     return calendar.timegm(datetime.utcnow().timetuple())
 
 
-@cache_it(cache=query_cache, expire=300)
+@cache_it(cache=cache, expire=300)
 def _sync_VTED():
     return now()
 
 
-def sync_VTED(force=False):
-    ts = now()
-    if force or ts - _sync_VTED() > 300 or META['ts'] is None:
-        log.info('[{}] Syncing VTED...'.format(ts))
-        META['network'] = VTED._network(cache=not force)
-        META['roots'] = VTED._roots(cache=not force)
-        META['ts'] = ts
-        log.info('[{}] Syncing completed'.format(ts))
-
-
-def get_td_ids(cache=True):
+def get_td_ids(R, cache=True):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT DISTINCT ?g ?id ?th WHERE {
@@ -284,7 +296,7 @@ def get_td_ids(cache=True):
     return map(lambda r: (r['g']['value'], r['id']['value'], r['th']['value']), res)
 
 
-def get_resource_transforms(td, cache=True):
+def get_resource_transforms(R, td, cache=True):
     res = R.query("""
     PREFIX map: <http://iot.linkeddata.es/def/wot-mappings#>
     SELECT DISTINCT ?t FROM <%s> WHERE {                        
@@ -293,7 +305,7 @@ def get_resource_transforms(td, cache=True):
     return map(lambda r: r['t']['value'], res)
 
 
-def get_thing_links(th, cache=True):
+def get_thing_links(R, th, cache=True):
     res = R.query("""
     SELECT DISTINCT ?o FROM <%s> WHERE {
       [] ?p ?o
@@ -303,7 +315,7 @@ def get_thing_links(th, cache=True):
     return map(lambda r: r['o']['value'], res)
 
 
-def get_td_thing(td_uri):
+def get_td_thing(R, td_uri):
     res = R.query("""
             PREFIX core: <http://iot.linkeddata.es/def/core#>
             SELECT DISTINCT ?th WHERE {
@@ -316,7 +328,7 @@ def get_td_thing(td_uri):
         log.warn('No described thing for TD {}'.format(td_uri))
 
 
-def get_th_types(th_uri, **kwargs):
+def get_th_types(R, th_uri, **kwargs):
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT DISTINCT ?type WHERE {
@@ -325,33 +337,45 @@ def get_th_types(th_uri, **kwargs):
     return [URIRef(r['type']['value']) for r in res if r['type']['value'] != str(RDFS.Resource)]
 
 
-class VTED_type(type):
-    def __getattr__(cls, key):
-        sync_VTED()
+class VTED(object):
+    def __init__(self, R):
+        self.R = R
+
+    def __sync_VTED(self, force=False):
+        ts = now()
+        if force or ts - _sync_VTED() > 300 or META['ts'] is None:
+            log.info('[{}] Syncing VTED...'.format(ts))
+            META['network'] = self._network(cache=not force)
+            META['roots'] = self._roots(cache=not force)
+            META['ts'] = ts
+            log.info('[{}] Syncing completed'.format(ts))
+
+    def __getattr__(self, key):
+        self.__sync_VTED()
         if key in META:
             return META[key]
         else:
-            return cls.__getattribute__(key)
+            return self.__getattribute__(key)
 
-    def sync(cls, force=False):
-        sync_VTED(force=force)
+    def sync(self, force=False):
+        self.__sync_VTED(force=force)
 
-    def add_component(cls, ted, eco, uri):
+    def add_component(self, ted, eco, uri):
         with lock:
             g = Graph(identifier=ted)
             g.add((URIRef(eco), CORE.hasComponent, URIRef(uri)))
-            R.insert(g)
+            self.R.insert(g)
 
-    def remove_component(cls, ted, uri):
+    def remove_component(self, ted, uri):
         with lock:
-            R.update(u"""
+            self.R.update(u"""
             PREFIX core: <http://iot.linkeddata.es/def/core#>
             DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s core:hasComponent <%s> }
             """ % (ted, uri))
 
-    def _network(cls, cache=True):
+    def _network(self, cache=True):
         network = nx.DiGraph()
-        td_th_ids = get_td_ids(cache=cache)
+        td_th_ids = get_td_ids(self.R, cache=cache)
         td_ids_dict = dict(map(lambda x: (x[0], x[1]), td_th_ids))
         td_th_dict = dict(map(lambda x: (x[0], x[2]), td_th_ids))
         th_td_dict = dict(map(lambda x: (x[2], x[0]), td_th_ids))
@@ -359,20 +383,20 @@ class VTED_type(type):
         for td, id in td_ids_dict.items():
             network.add_node(id)
 
-            td_transforms = filter(lambda x: x in all_tds, get_resource_transforms(td, cache=cache))
+            td_transforms = filter(lambda x: x in all_tds, get_resource_transforms(self.R, td, cache=cache))
             for linked_td in td_transforms:
                 network.add_edge(id, td_ids_dict[linked_td])
 
             th = td_th_dict[td]
             thing_td_links = map(lambda x: th_td_dict[x],
-                                 filter(lambda x: x in th_td_dict, get_thing_links(th, cache=cache)))
+                                 filter(lambda x: x in th_td_dict, get_thing_links(self.R, th, cache=cache)))
             for linked_td in thing_td_links:
                 network.add_edge(id, td_ids_dict[linked_td])
 
         return network
 
-    def _roots(cls, cache=True):
-        res = R.query("""
+    def _roots(self, cache=True):
+        res = self.R.query("""
         PREFIX core: <http://iot.linkeddata.es/def/core#>
         SELECT DISTINCT ?root ?td WHERE {
             [] a core:ThingEcosystemDescription ;
@@ -384,9 +408,9 @@ class VTED_type(type):
         roots = map(lambda r: (r['root']['value'], r.get('td', {}).get('value', None)), res)
         return roots
 
-    def ted_eco(cls):
+    def ted_eco(self):
         try:
-            res = R.query("""
+            res = self.R.query("""
             PREFIX core: <http://iot.linkeddata.es/def/core#>                
             SELECT ?g ?eco WHERE {
                GRAPH ?g {
@@ -400,39 +424,35 @@ class VTED_type(type):
         except IndexError:
             raise EnvironmentError
 
-    def update(cls, ted, th_graph_builder, eco_uri):
+    def update(self, ted, th_graph_builder, eco_uri):
         td_nodes = {td: td.node for td in ted.ecosystem.tds}
-        last_td_based_roots = set([URIRef(root_uri) for (root_uri, td) in cls._roots(cache=False) if td and root_uri])
+        last_td_based_roots = set([URIRef(root_uri) for (root_uri, td) in self._roots(cache=False) if td and root_uri])
 
         for td in ted.ecosystem.tds:
-            R.push(td.to_graph(td_nodes=td_nodes))
-            R.push(th_graph_builder(td))
+            self.R.push(td.to_graph(td_nodes=td_nodes))
+            self.R.push(th_graph_builder(td))
 
         try:
-            ted_uri, eco = VTED.ted_eco()
+            ted_uri, eco = self.ted_eco()
         except EnvironmentError:
-            R.push(ted.to_graph(node=eco_uri, abstract=True))
+            self.R.push(ted.to_graph(node=eco_uri, abstract=True))
         else:
-            cls.sync(force=True)
-            network_roots = set(map(lambda (n, _): URIRef(get_th_node(n)),
-                                    filter(lambda (n, degree): degree == 0, dict(VTED.network.in_degree()).items())))
+            self.sync(force=True)
+            network_roots = set(map(lambda (n, _): URIRef(get_th_node(self.R, n)),
+                                    filter(lambda (n, degree): degree == 0, dict(self.network.in_degree()).items())))
             obsolete_td_based_roots = set.difference(last_td_based_roots, network_roots)
             ted_components = ted.ecosystem.roots
             for root in ted_components:
                 if isinstance(root, TD):
                     resource = root.resource
                     if resource.node in network_roots and resource.node not in last_td_based_roots:
-                        VTED.add_component(ted_uri, eco, resource.node)
+                        self.add_component(ted_uri, eco, resource.node)
                 else:
-                    R.push(root.to_graph())
-                    VTED.add_component(ted_uri, eco, root.node)
+                    self.R.push(root.to_graph())
+                    self.add_component(ted_uri, eco, root.node)
 
             for root in obsolete_td_based_roots:
-                VTED.remove_component(ted_uri, root)
+                self.remove_component(ted_uri, root)
 
-            cls.sync(force=True)
-            R.expire_cache()
-
-
-class VTED:
-    __metaclass__ = VTED_type
+            self.sync(force=True)
+            self.R.expire_cache()

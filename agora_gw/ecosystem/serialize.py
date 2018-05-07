@@ -32,7 +32,8 @@ from pyld import jsonld
 from rdflib import XSD, Graph, ConjunctiveGraph
 from rdflib.plugins.parsers.notation3 import BadSyntax
 
-from agora_gw.data.repository import GEO, skolemize, deskolemize
+# from agora_gw.data.repository import GEO
+from agora_gw.data.graph import skolemize, deskolemize
 from agora_gw.misc.utils import merge_two_dicts
 
 __author__ = 'Fernando Serena'
@@ -46,7 +47,7 @@ CTX_NAMESPACES = {
     CORE: '@vocab',
     WOT: 'wot',
     # MAP: 'map',
-    GEO: 'geo'
+    # GEO: 'geo'
 }
 
 CTX_MAPPINGS = {
@@ -190,7 +191,7 @@ def replace_interaction_name(interaction_dict):
         del interaction_dict['wot:eventName']
 
 
-def serialize_TED(ted, format, td_nodes=None, th_nodes=None, min=False, abstract=False, prefixes=None):
+def graph_TED(ted, td_nodes=None, th_nodes=None, min=False, abstract=False, prefixes=None):
     g = ted.to_graph(td_nodes=td_nodes, th_nodes=th_nodes, abstract=abstract)
     if prefixes:
         for prefix, ns in prefixes.items():
@@ -200,20 +201,27 @@ def serialize_TED(ted, format, td_nodes=None, th_nodes=None, min=False, abstract
         for root in filter(lambda x: isinstance(x, TD), ted.ecosystem.roots):
             root.resource.to_graph(g)
 
+    return g
+
+
+def serialize_TED(ted, format, td_nodes=None, th_nodes=None, min=False, abstract=False, prefixes=None):
+    g = graph_TED(ted, td_nodes=td_nodes, th_nodes=th_nodes, min=min, abstract=abstract, prefixes=prefixes)
     return serialize_graph(g, format, frame=CORE.ThingEcosystemDescription)
 
 
 def serialize_graph(g, format=TURTLE, frame=None):
-    if format == TURTLE:
-        return g.serialize(format='turtle')
-
     context = build_graph_context(g)
     cg = skolemize(g)
     ted_nquads = cg.serialize(format='nquads')
     ld = jsonld.from_rdf(ted_nquads)
     if frame is not None:
         ld = jsonld.frame(ld, {'context': context, '@type': str(frame)})
-    return json.dumps(jsonld.compact(ld, context), indent=3, sort_keys=True)
+    ld = jsonld.compact(ld, context)
+
+    if format == TURTLE:
+        return ld_triples(ld).serialize(format='turtle')
+
+    return json.dumps(ld, indent=3, sort_keys=True)
 
 
 def _ted_as_json_ld(sg):

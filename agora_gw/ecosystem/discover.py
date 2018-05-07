@@ -28,7 +28,6 @@ from rdflib.plugins.sparql.algebra import translateQuery
 from rdflib.plugins.sparql.parser import parseQuery
 from rdflib.plugins.sparql.sparql import Query
 
-from agora_gw.data import R
 from agora_gw.ecosystem.description import build_component, build_TED
 
 __author__ = 'Fernando Serena'
@@ -58,13 +57,13 @@ def extract_bgps(q, cache=None):
     return bgps, filters
 
 
-def build_agp(bgp):
-    agp = AGP([TP(*tp) for tp in bgp.triples], prefixes=R.agora.fountain.prefixes)
+def build_agp(fountain, bgp):
+    agp = AGP([TP(*tp) for tp in bgp.triples], prefixes=fountain.prefixes)
     return agp
 
 
-def bgp_root_types(bgp):
-    agp = build_agp(bgp)
+def bgp_root_types(fountain, bgp):
+    agp = build_agp(fountain, bgp)
     graph = agp.graph
     roots = agp.roots
     str_roots = map(lambda x: str(x), roots)
@@ -72,7 +71,7 @@ def bgp_root_types(bgp):
     for c in graph.contexts():
         try:
             root_tps = filter(lambda (s, pr, o): str(s).replace('?', '') in str_roots, c.triples((None, None, None)))
-            context_root_types = find_root_types(R.agora.fountain, root_tps, c, extend=False).values()
+            context_root_types = find_root_types(fountain, root_tps, c, extend=False).values()
             root_types.update(reduce(lambda x, y: x.union(y), context_root_types, set()))
         except TypeError:
             pass
@@ -80,9 +79,9 @@ def bgp_root_types(bgp):
     return root_types
 
 
-def query_root_types(q, bgp_cache=None):
-    types = reduce(lambda x, y: x.union(bgp_root_types(y)), extract_bgps(q, cache=bgp_cache)[0], set())
-    desc_types = describe_types(types)
+def query_root_types(fountain, q, bgp_cache=None):
+    types = reduce(lambda x, y: x.union(bgp_root_types(fountain, y)), extract_bgps(q, cache=bgp_cache)[0], set())
+    desc_types = describe_types(fountain, types)
     return keep_general(desc_types)
 
 
@@ -99,14 +98,14 @@ def keep_specific(types):
     return {fid: types[fid] for fid in filtered_ids}
 
 
-def describe_type(t):
-    desc = R.agora.fountain.get_type(t)
+def describe_type(fountain, t):
+    desc = fountain.get_type(t)
     desc['id'] = t
     return desc
 
 
-def describe_types(types):
-    return {t: describe_type(t) for t in types}
+def describe_types(fountain, types):
+    return {t: describe_type(fountain, t) for t in types}
 
 
 def is_subclass_of_thing(t):
@@ -117,17 +116,16 @@ def tuple_from_result_row(row):
     return tuple([row[var]['value'] for var in row])
 
 
-def generate_dict(res):
-    ns = R.ns()
+def generate_dict(n3, ns, res):
     d = defaultdict(set)
     for k, v in map(lambda x: tuple_from_result_row(x), res):
-        d[k].add(R.n3(v, ns))
+        d[k].add(n3(v, ns))
     return d
 
 
-def contains_solutions(id, query, bgp_cache=None):
+def contains_solutions(R, id, query, bgp_cache=None):
     result = True
-    queries = list(transform_into_specific_queries(id, query, bgp_cache=bgp_cache))
+    queries = list(transform_into_specific_queries(R, id, query, bgp_cache=bgp_cache))
     for sub_query in queries:
         result = result and bool(map(lambda r: r, R.query(sub_query, cache=True, expire=300)))
         if not result:
@@ -135,12 +133,12 @@ def contains_solutions(id, query, bgp_cache=None):
     return result
 
 
-def is_target_reachable(source_types, target, fountain=None, cache=None):
+def is_target_reachable(fountain, source_types, target, cache=None):
     for st in source_types:
         if cache and (st, target) in cache:
             return cache[(st, target)]
 
-        connected = R.link_path(st, target, fountain=fountain)
+        connected = fountain.connected(st, target)
         if cache is not None:
             cache[(st, target)] = connected
         if connected:
@@ -149,7 +147,7 @@ def is_target_reachable(source_types, target, fountain=None, cache=None):
     return False
 
 
-def search_things(type, q, fountain, reachability=True, reachability_cache=None, bgp_cache=None):
+def search_things(R, type, q, reachability=True, reachability_cache=None, bgp_cache=None, fountain=None):
     res = R.query("""
        prefix core: <http://iot.linkeddata.es/def/core#>
        prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> 
@@ -168,7 +166,10 @@ def search_things(type, q, fountain, reachability=True, reachability_cache=None,
        }
        """, cache=True, expire=300, infer=True)
 
-    rd = generate_dict(res)
+    if not fountain:
+        fountain = R.fountain
+
+    rd = generate_dict(R.n3, R.ns(fountain=fountain), res)
     type_n3 = type['id']
     all_types = fountain.types
 
@@ -178,7 +179,7 @@ def search_things(type, q, fountain, reachability=True, reachability_cache=None,
     for seed, type_ids in rd.items():
         try:
             types = {t: fountain.get_type(t) for t in type_ids if t in all_types}
-            if types and (type_n3 in types or is_target_reachable(types.keys(), type_n3, fountain=fountain,
+            if types and (type_n3 in types or is_target_reachable(fountain, types.keys(), type_n3,
                                                                   cache=reachability_cache)):
                 rd[seed] = types
             else:
@@ -188,7 +189,7 @@ def search_things(type, q, fountain, reachability=True, reachability_cache=None,
 
     final_rd = {}
     for seed in rd:
-        if reachability or contains_solutions(seed, q, bgp_cache=bgp_cache):
+        if reachability or contains_solutions(R, seed, q, bgp_cache=bgp_cache):
             final_rd[seed] = rd[seed]
 
     return final_rd
@@ -209,7 +210,7 @@ def make_up_bgp_query(q, predicate_mask, bgp_cache=None):
             yield tps_str, filter_clause
 
 
-def transform_into_specific_queries(id, q, bgp_cache=None):
+def transform_into_specific_queries(R, id, q, bgp_cache=None):
     desc_predicates = R.thing_describing_predicates(id)
     if RDF.type in desc_predicates:
         desc_predicates.remove(RDF.type)
@@ -219,7 +220,7 @@ def transform_into_specific_queries(id, q, bgp_cache=None):
         yield td_q % (id, tps_str, filter_clause)
 
 
-def transform_into_graph_td_queries(q, bgp_cache=None):
+def transform_into_graph_td_queries(R, q, bgp_cache=None):
     desc_predicates = R.describing_predicates
     if RDF.type in desc_predicates:
         desc_predicates.remove(RDF.type)
@@ -229,11 +230,13 @@ def transform_into_graph_td_queries(q, bgp_cache=None):
         yield td_q % (tps_str, filter_clause)
 
 
-def discover_ecosystem(q, reachability=False):
+def discover_ecosystem(R, VTED, q, reachability=False, lazy=True):
     bgp_cache = {}
 
+    fountain = R.fountain
+
     # 1. Get all BPG root types
-    root_types = query_root_types(q, bgp_cache=bgp_cache)
+    root_types = query_root_types(fountain, q, bgp_cache=bgp_cache)
 
     if not root_types:
         raise AttributeError('Could not understand the given query')
@@ -243,19 +246,19 @@ def discover_ecosystem(q, reachability=False):
 
     # 2. Find relevant things for identified root types
     log.debug('Searching for relevant things...')
-    fountain = R.fountain
 
     reachability_cache = {}
     typed_things = {
-        type['id']: search_things(type, q, fountain,
+        type['id']: search_things(R, type, q,
                                   reachability=reachability,
+                                  fountain=fountain,
                                   reachability_cache=reachability_cache,
                                   bgp_cache=bgp_cache) for type in root_types.values()}
     log.debug('Found things of different types: {}'.format(typed_things.keys()))
 
     # 2b. Filter seeds
     log.debug('Analyzing relevant things...')
-    graph_td_queries = list(transform_into_graph_td_queries(q, bgp_cache=bgp_cache))
+    graph_td_queries = list(transform_into_graph_td_queries(R, q, bgp_cache=bgp_cache))
     query_matching_things = set()
     for q in graph_td_queries:
         graphs = map(lambda r: r['g']['value'], R.query(q, cache=True, expire=300))
@@ -271,9 +274,10 @@ def discover_ecosystem(q, reachability=False):
     # 3. Retrieve/Build ecosystem TDs
     log.debug('Preparing TDs for the discovered ecosystem...')
     node_map = {}
-    components = {root: list(build_component(root, node_map=node_map)) for root in root_things}
+    components = {root: list(build_component(R, VTED, root, node_map=node_map, lazy=lazy)) for root in root_things}
 
     # 4. Compose ecosystem description
     log.debug('Building TED of the discovered ecosystem...')
     ted = build_TED(components.values())
+
     return ted

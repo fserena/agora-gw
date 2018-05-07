@@ -34,16 +34,16 @@ __author__ = 'Fernando Serena'
 
 class Application(BaseApplication):
     def init(self, **kwargs):
-        # setup_logging(LOG_LEVEL)
         if self.default_app is None:
-            self.default_app = build(__name__)
+            self.default_app, self.gw = build(__name__, **kwargs)
 
     def __init__(self, options=None):
         self.default_app = None
+        self.gw = None
         self.lock = Lock()
         self.options = options or {}
         with self.lock:
-            self.init()
+            self.init(**self.options)
         super(Application, self).__init__()
 
     def load_config(self):

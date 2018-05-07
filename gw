@@ -36,7 +36,6 @@ API_PORT = int(os.environ.get('API_PORT', 8000))
 
 __author__ = 'Fernando Serena'
 
-
 if __name__ == '__main__':
     try:
         options = {
@@ -45,11 +44,14 @@ if __name__ == '__main__':
             'workerconnections': 1000,
             'timeout': REQUEST_TIMEOUT,
             'errorlog': '-',
-            'accesslog': '-'
+            'accesslog': '-',
+            'fountain_host': 'localhost',
+            'fountain_port': 5001,
+            # 'persist_mode': True,
+            # 'redis_file': 'fountain.db'
         }
         Application(options).run()
     except (KeyboardInterrupt, SystemExit, SystemError):
         pass
     finally:
         Agora.close()
-

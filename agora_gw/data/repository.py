@@ -18,122 +18,44 @@
   limitations under the License.
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
-import json
 import logging
 import os
-import traceback
 from StringIO import StringIO
 from multiprocessing import Lock
-from urllib import urlencode
-from urlparse import urlparse
 
-import requests
-from SPARQLWrapper import SPARQLWrapper, JSON, N3
-from agora import Agora, Planner
+from agora import Agora
 from agora.engine.fountain.onto import DuplicateVocabulary
 from agora.engine.utils import Wrapper
-from agora.server.fountain import client as fc
-from rdflib import Graph, RDF, URIRef, ConjunctiveGraph
+from rdflib import Graph, RDF, URIRef
 from rdflib.namespace import Namespace, OWL, DC
-from rdflib.term import BNode, Literal
-from redis_cache import SimpleCache, cache_it, DEFAULT_EXPIRY
+from rdflib.term import Literal
 from shortuuid import uuid
+
+from agora_gw.data.graph import push as push_g, pull, delete
+from agora_gw.data.sparql import SPARQL
 
 __author__ = 'Fernando Serena'
 
-sparql_url = 'localhost'
-objects_url = 'localhost'
-update_url = 'localhost'
-
-SPARQL_HOST = os.environ.get('SPARQL_HOST', sparql_url)
-UPDATE_HOST = os.environ.get('UPDATE_HOST', update_url)
-SCHEMA_GRAPH = os.environ.get('SCHEMA_GRAPH', 'http://example.org/schema')
-EXTENSION_BASE = os.environ.get('EXTENSION_BASE', 'http://example.org/extensions/')
-
-QUERY_CACHE_HOST = os.environ.get('QUERY_CACHE_HOST', 'localhost')
-QUERY_CACHE_NUMBER = int(os.environ.get('QUERY_CACHE_NUMBER', 8))
+SCHEMA_GRAPH = os.environ.get('SCHEMA_GRAPH', 'http://agora.org/schema')
+EXTENSION_BASE = os.environ.get('EXTENSION_BASE', 'http://agora.org/extensions/')
 
 WOT = Namespace('http://iot.linkeddata.es/def/wot#')
 CORE = Namespace('http://iot.linkeddata.es/def/core#')
 EXT = Namespace(EXTENSION_BASE)
 
-GEO = Namespace('http://www.w3.org/2003/01/geo/wgs84_pos#')
+FOUNTAIN_HOST = os.environ.get('FOUNTAIN_HOST', None)
+FOUNTAIN_PORT = os.environ.get('FOUNTAIN_PORT', None)
 
-FOUNTAIN_HOST = os.environ.get('FOUNTAIN_HOST', 'localhost')
-FOUNTAIN_PORT = os.environ.get('FOUNTAIN_PORT', 8001)
-
-log = logging.getLogger('agora.gateway.repository')
+log = logging.getLogger('agora.gateway.data.repository')
 _lock = Lock()
 
-query_cache = SimpleCache(limit=10000, expire=60 * 60, hashkeys=True, host=QUERY_CACHE_HOST, port=6379,
-                          db=QUERY_CACHE_NUMBER, namespace='gateway')
-
-REPOSITORY_BASE = unicode(os.environ.get('REPOSITORY_BASE', 'http://descriptions').rstrip('/'))
-BNODE_SKOLEM_BASE = os.environ.get('BNODE_SKOLEM_BASE', 'http://bnodes').rstrip('/')
+REPOSITORY_BASE = unicode(os.environ.get('REPOSITORY_BASE', 'http://agora.org/data/').rstrip('/'))
 
 
-def get_agora():
-    fountain = fc(host=FOUNTAIN_HOST, port=FOUNTAIN_PORT)
-    planner = Planner(fountain)
+def _learn_thing_describing_predicates(id, sparql):
+    # type: (str, SPARQL, dict) -> set
 
-    agora = Agora()
-    agora.planner = planner
-    log.info('The knowledge graph contains {} types and {} properties'.format(len(agora.fountain.types),
-                                                                              len(agora.fountain.properties)))
-    return agora
-
-
-def update(q):
-    res = requests.post(UPDATE_HOST,
-                        headers={
-                            'Accept': 'text/plain,*/*;q=0.9',
-                            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-                        },
-                        data=urlencode({'update': q.encode('utf-8')}))
-    return res
-
-
-def query(q, cache=True, infer=True, expire=DEFAULT_EXPIRY, namespace=None):
-    def wrapper(q):
-        sparql = SPARQLWrapper(SPARQL_HOST)
-        sparql.setRequestMethod("postdirectly")
-        sparql.setMethod('POST')
-
-        log.debug(u'Querying: {}'.format(q))
-        sparql.setQuery(q)
-
-        sparql.addCustomParameter('infer', str(infer).lower())
-        if not ('construct' in q.lower()):
-            sparql.setReturnFormat(JSON)
-        else:
-            sparql.setReturnFormat(N3)
-
-        results = sparql.query().convert()
-        if isinstance(results, str):
-            return results.decode('utf-8')
-        else:
-            if 'results' in results:
-                return json.dumps(results["results"]["bindings"]).decode('utf-8')
-            else:
-                return json.dumps(results['boolean']).decode('utf-8')
-
-    if cache:
-        try:
-            ret = cache_it(cache=query_cache, expire=expire, namespace=namespace)(wrapper)(q)
-        except UnicodeDecodeError:
-            traceback.print_exc()
-            return []
-    else:
-        ret = wrapper(q)
-
-    try:
-        return json.loads(ret)
-    except ValueError:
-        return ret
-
-
-def learn_thing_describing_predicates(id):
-    res = query("""
+    res = sparql.query("""
     PREFIX owl: <http://www.w3.org/2002/07/owl#>
     SELECT DISTINCT ?p WHERE {            
         GRAPH <%s> { [] ?p [] }
@@ -141,7 +63,7 @@ def learn_thing_describing_predicates(id):
     """ % id, cache=True, expire=300)
     all_predicates = set([URIRef(x['p']['value']) for x in res])
 
-    res = query("""
+    res = sparql.query("""
             prefix core: <http://iot.linkeddata.es/def/core#>
             SELECT DISTINCT ?p WHERE {
                 [] a core:ThingDescription ;
@@ -153,8 +75,10 @@ def learn_thing_describing_predicates(id):
     return all_predicates.difference(bound_predicates)
 
 
-def learn_describing_predicates():
-    res = query("""
+def _learn_describing_predicates(sparql):
+    # type: (SPARQL, dict) -> set
+
+    res = sparql.query("""
     PREFIX owl: <http://www.w3.org/2002/07/owl#>
     SELECT DISTINCT ?p WHERE {    
         {
@@ -171,7 +95,7 @@ def learn_describing_predicates():
     """, cache=True, expire=300)
     all_predicates = set([URIRef(x['p']['value']) for x in res])
 
-    res = query("""
+    res = sparql.query("""
         prefix map: <http://iot.linkeddata.es/def/wot-mappings#>
         SELECT DISTINCT ?p WHERE {                
             [] map:predicate ?p
@@ -179,7 +103,7 @@ def learn_describing_predicates():
         """, cache=True, infer=False, expire=300)
     mapped_predicates = set([URIRef(x['p']['value']) for x in res])
 
-    res = query("""
+    res = sparql.query("""
         prefix core: <http://iot.linkeddata.es/def/core#>
         SELECT DISTINCT ?p WHERE {
             [] a core:ThingDescription ;
@@ -192,167 +116,38 @@ def learn_describing_predicates():
     return all_predicates.difference(mapped_predicates).difference(td_bound_predicates)
 
 
-def learn_describing_types():
-    res = query("""
+def _learn_describing_types(sparql, schema_graph=SCHEMA_GRAPH):
+    # type: (sparql, dict) -> set
+
+    res = sparql.query("""
     SELECT DISTINCT ?type WHERE {
         GRAPH ?g { [] a ?type }    	
         FILTER(?g != <%s>)
     }
-    """ % SCHEMA_GRAPH, cache=True, expire=300)
+    """ % schema_graph, cache=True, expire=300)
     types = set([URIRef(x['type']['value']) for x in res])
     return types
 
 
-def get_graph(gid, **kwargs):
-    data_gid = gid
-    g_n3 = query("""
-        CONSTRUCT { ?s ?p ?o }
-        WHERE
-        {
-            GRAPH <%s> {
-                ?s ?p ?o
-            } .
-        }
-        """ % gid, **kwargs)
-
-    g = Graph(identifier=gid)
-    g.parse(StringIO(g_n3), format='n3')
-    if g:
-        res = query("""
-        SELECT DISTINCT ?t WHERE {
-          <%s> a ?t
-          FILTER(isURI(?t))
-        }
-        """ % data_gid, **kwargs)
-        for trow in res:
-            g.add((URIRef(data_gid), RDF.type, URIRef(trow['t']['value'])))
-
-    bn_map = {}
-    deskolem = Graph(identifier=gid)
-    for s, p, o in g:
-        if BNODE_SKOLEM_BASE in s:
-            if s not in bn_map:
-                bn_map[s] = BNode()
-            s = bn_map[s]
-        if BNODE_SKOLEM_BASE in o:
-            if o not in bn_map:
-                bn_map[o] = BNode()
-            o = bn_map[o]
-        deskolem.add((s, p, o))
-    return deskolem
-
-
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    index = 0
-    chunk = []
-    for t in l.triples((None, None, None)):
-        if index < n:
-            chunk.append(t)
-            index += 1
-        else:
-            yield chunk[:]
-            chunk = []
-            index = 0
-
-    if chunk:
-        yield chunk[:]
-
-
-def store_graph(g, gid=None, delete=True):
-    q_tmpl = u"""    
-    INSERT DATA
-    { GRAPH <%s> { %s } }
-    """
-    gid = gid or g.identifier
-    log.debug('Storing graph {}...'.format(gid))
-    if delete:
-        update(u"""
-        DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s ?p ?o }
-        """ % gid)
-
-    skolem = skolemize(g)
-    for chunk in chunks(skolem, 50):
-        all_triples_str = u' . '.join(map(lambda (s, p, o): u'{} {} {}'.format(s.n3(), p.n3(), o.n3()), chunk))
-        query = q_tmpl % (gid, all_triples_str)
-        try:
-            update(query)
-        except Exception as e:
-            print query
-            log.warn(e.message)
-
-
-
-
-def delete_graph(gid):
-    update(u"""
-    DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s ?p ?o }
-    """ % gid)
-
-
-def skolemize(g):
-    bn_map = {}
-    skolem = ConjunctiveGraph()
-    for prefix, ns in g.namespaces():
-        skolem.bind(prefix, ns)
-    for s, p, o in g:
-        if isinstance(s, BNode):
-            if s not in bn_map:
-                bn_map[s] = URIRef('/'.join([BNODE_SKOLEM_BASE, str(s)]))
-            s = bn_map[s]
-        if isinstance(o, BNode):
-            if o not in bn_map:
-                bn_map[o] = URIRef('/'.join([BNODE_SKOLEM_BASE, str(o)]))
-            o = bn_map[o]
-        skolem.add((s, p, o))
-    return skolem
-
-
-def deskolemize(g):
-    bn_map = {}
-    deskolem = ConjunctiveGraph()
-    for prefix, ns in g.namespaces():
-        deskolem.bind(prefix, ns)
-
-    for s, p, o in g:
-        if isinstance(s, URIRef) and s.startswith(BNODE_SKOLEM_BASE):
-            if s not in bn_map:
-                bn_map[s] = BNode(s.replace(BNODE_SKOLEM_BASE + '/', ''))
-            s = bn_map[s]
-        if isinstance(o, URIRef) and o.startswith(BNODE_SKOLEM_BASE):
-            if o not in bn_map:
-                bn_map[o] = BNode(o.replace(BNODE_SKOLEM_BASE + '/', ''))
-            o = bn_map[o]
-        deskolem.add((s, p, o))
-    return deskolem
-
-
-def canonize_node(g, node, authority=REPOSITORY_BASE, id=None):
-    skolem = ConjunctiveGraph()
-
-    if isinstance(node, URIRef):
-        node_parse = urlparse(node)
-        node_id = node_parse.path.lstrip('/')
-        if node_id != id:
-            return g
-
-    if not id:
-        id = str(node)
-
-    skolem_uri = URIRef('/'.join([authority, str(id)]))
-    for s, p, o in g:
-        if s == node:
-            s = skolem_uri
-        if o == node:
-            o = skolem_uri
-        skolem.add((s, p, o))
-    return skolem
-
-
 class Repository(object):
-    def __init__(self):
-        self.agora = get_agora()
-        self.expire_cache()
+    def __init__(self, **kwargs):
+        pass
+
+    @property
+    def ext_base(self):
+        return self.__ext_base or EXTENSION_BASE
+
+    @ext_base.setter
+    def ext_base(self, eb):
+        self.__ext_base = eb
+
+    @property
+    def agora(self):
+        return self._agora
+
+    @agora.setter
+    def agora(self, a):
+        self._agora = a
 
         fountain = self.fountain
         prefixes = fountain.prefixes
@@ -362,22 +157,22 @@ class Repository(object):
         rev_prefixes = {prefixes[prefix]: prefix for prefix in prefixes}
 
         res = self.query("""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        SELECT DISTINCT ?g ?gid WHERE {
-            GRAPH ?g {
-                {
-                    [] a owl:Class 
-                } UNION {
-                    [] a rdfs:Class
-                } UNION {
-                    [] a owl:DatatypeProperty
-                } UNION {
-                    [] a owl:ObjectProperty
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?g ?gid WHERE {
+                    GRAPH ?g {
+                        {
+                            [] a owl:Class 
+                        } UNION {
+                            [] a rdfs:Class
+                        } UNION {
+                            [] a owl:DatatypeProperty
+                        } UNION {
+                            [] a owl:ObjectProperty
+                        }
+                    }
                 }
-            }
-        }
-        """)
+                """)
         remote_vocabs = set([URIRef(r['g']['value']) for r in res])
         remote_delta = remote_vocabs.difference(extension_vocabs)
         for rv in remote_delta:
@@ -391,44 +186,58 @@ class Repository(object):
                 try:
                     ext_id = [prefix for (prefix, ns) in rg.namespaces() if ns == rv].pop()
                 except IndexError:
-                    if EXTENSION_BASE in rv:
-                        ext_id = rv.replace(EXTENSION_BASE, '').lstrip('/').lstrip('#')
+                    if self.ext_base in rv:
+                        ext_id = rv.replace(self.ext_base, '').lstrip('/').lstrip('#')
 
             if ext_id is not None:
                 self.learn(rg, ext_ns=rv, ext_id=ext_id, push=False)
 
         local_delta = extension_vocabs.difference(remote_vocabs)
         for lv in local_delta:
-            ttl = self.get_extension(rev_prefixes.get(lv, lv.replace(EXT, '')))
+            ext_g = self.get_extension(rev_prefixes.get(lv, lv.replace(EXT, '')))
             g = Graph(identifier=lv)
-            g.parse(StringIO(ttl), format='turtle')
-            store_graph(g, delete=True)
+            g.__iadd__(ext_g)
+            push_g(self.sparql, g)
+
+    @property
+    def base(self):
+        return self.__repository_base or REPOSITORY_BASE
+    
+    @base.setter
+    def base(self, b):
+        self.__repository_base = b
 
     @property
     def describing_types(self):
-        return learn_describing_types()
+        return _learn_describing_types(self.sparql)
 
     @property
     def describing_predicates(self):
-        return learn_describing_predicates()
+        return _learn_describing_predicates(self.sparql)
 
     def thing_describing_predicates(self, id):
-        return learn_thing_describing_predicates(id)
+        return _learn_thing_describing_predicates(id, self.sparql)
 
     def query(self, q, **kwargs):
-        return query(u'{}'.format(q), **kwargs)
+        return self.sparql.query(u'{}'.format(q), **kwargs)
 
     def update(self, q):
-        return update(u'{}'.format(q))
+        return self.sparql.update(u'{}'.format(q))
 
     def pull(self, uri, **kwargs):
-        return get_graph(u'{}'.format(uri), **kwargs)
+        if not uri:
+            raise AttributeError(u'Cannot pull {} from repository'.format(uri))
+        g = pull(self.sparql, u'{}'.format(uri), **kwargs)
+        for prefix, uri in self.fountain.prefixes.items():
+            g.bind(prefix, uri)
+        return g
+
 
     def push(self, g):
-        store_graph(g)
+        push_g(self.sparql, g)
 
     def insert(self, g):
-        store_graph(g, delete=False)
+        push_g(self.sparql, g, delete=False)
 
     @property
     def extensions(self):
@@ -461,8 +270,8 @@ class Repository(object):
             self.agora.fountain.update_vocabulary(ext_id, g_ttl)
 
         if push:
-            store_graph(g, gid=ext_ns, delete=True)
-        query_cache.connection.flushdb()
+            push_g(self.sparql, g, gid=ext_ns, delete=True)
+        self.sparql.expire_cache()
 
         return ext_id
 
@@ -477,7 +286,7 @@ class Repository(object):
         ttl = self.agora.fountain.get_vocabulary(id)
         g = Graph()
         g.parse(StringIO(ttl), format='turtle')
-        res_g = Graph()
+        res_g = Graph(identifier=id)
         rev_ns = {ns: prefix for prefix, ns in g.namespaces()}
         for s, p, o in g:
             if o == OWL.Ontology:
@@ -487,13 +296,13 @@ class Repository(object):
             match_ns(p)
             match_ns(o)
             res_g.add((s, p, o))
-        return res_g.serialize(format='turtle')
+        return res_g
 
     def delete_extension(self, id):
         prefixes = self.agora.fountain.prefixes
         ext_ns = prefixes.get(id, EXT[id])
         self.agora.fountain.delete_vocabulary(id)
-        delete_graph(ext_ns)
+        delete(self.sparql, ext_ns)
 
     def shutdown(self):
         try:
@@ -501,13 +310,17 @@ class Repository(object):
         except Exception:
             pass
 
-    def ns(self):
+    def ns(self, fountain=None):
+        if fountain is None:
+            fountain = self.agora.fountain
         g = Graph()
-        for prefix, ns in self.agora.fountain.prefixes.items():
+        for prefix, ns in fountain.prefixes.items():
             g.bind(prefix, URIRef(ns))
         return g.namespace_manager
 
-    def n3(self, uri, ns):
+    def n3(self, uri, ns=None):
+        if ns is None:
+            ns = self.ns()
         qname = URIRef(uri).n3(ns)
         qname_strip = qname.lstrip('<').rstrip('>')
         if qname_strip == uri:
@@ -515,17 +328,28 @@ class Repository(object):
 
         return qname
 
-    def link_path(self, source, target, fountain=None):
-        if fountain is None:
-            fountain = self.agora.fountain
-        return fountain.connected(source, target)
-
     def expire_cache(self, namespace=None):
-        if namespace is not None:
-            query_cache.flush_namespace(namespace)
-        else:
-            query_cache.connection.flushdb()
+        self.sparql.expire_cache(namespace=namespace)
 
     @property
     def fountain(self):
         return Wrapper(self.agora.fountain)
+
+    def __new__(cls, *args, **kwargs):
+        r = super(Repository, cls).__new__(cls)
+        r.__init__()
+        r_base = kwargs.get('repository_base', None)
+        r.base = r_base
+        ext_base = kwargs.get('extension_base', None)
+        r.ext_base = ext_base
+
+        if 'fountain_host' not in kwargs:
+            kwargs['fountain_host'] = FOUNTAIN_HOST
+
+        if 'fountain_port' not in kwargs:
+            kwargs['fountain_port'] = FOUNTAIN_PORT
+
+        agora = Agora(**kwargs)
+        r.sparql = SPARQL(**kwargs)
+        r.agora = agora
+        return r
