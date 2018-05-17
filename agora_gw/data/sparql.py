@@ -43,7 +43,12 @@ def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, spa
         else:
             sparql.setReturnFormat(N3)
 
-        results = sparql.query().convert()
+        try:
+            results = sparql.query().convert()
+        except Exception as e:
+            print q, e.message
+            raise e
+
         if isinstance(results, str):
             return results.decode('utf-8')
         else:

@@ -12,8 +12,8 @@ BNODE_SKOLEM_BASE = os.environ.get('BNODE_SKOLEM_BASE', 'http://bnodes').rstrip(
 log = logging.getLogger('agora.gateway.data.graph')
 
 
-def _get_graph(gid, sparql, **kwargs):
-    # type: (str, SPARQL) -> Graph
+def _get_graph(gid, sparql, de_skolemize=True, **kwargs):
+    # type: (str, SPARQL, bool, any) -> Graph
     data_gid = gid
     g_n3 = sparql.query("""
         CONSTRUCT { ?s ?p ?o }
@@ -38,6 +38,9 @@ def _get_graph(gid, sparql, **kwargs):
             type_value = trow['t']['value']
             if BNODE_SKOLEM_BASE not in type_value:
                 g.add((URIRef(data_gid), RDF.type, URIRef(type_value)))
+
+    if not de_skolemize:
+        return g
 
     bn_map = {}
     deskolem = Graph(identifier=gid)
@@ -71,8 +74,8 @@ def _chunks(l, n):
         yield chunk[:]
 
 
-def _store_graph(g, sparql, gid=None, delete=True):
-    # type: (Graph, SPARQL, str, bool) -> None
+def _store_graph(g, sparql, gid=None, delete=True, do_skolem=True):
+    # type: (Graph, SPARQL, str, bool, bool) -> None
     q_tmpl = u"""    
     INSERT DATA
     { GRAPH <%s> { %s } }
@@ -84,8 +87,8 @@ def _store_graph(g, sparql, gid=None, delete=True):
         DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s ?p ?o }
         """ % gid)
 
-    skolem = skolemize(g)
-    for chunk in _chunks(skolem, 50):
+    skolem = skolemize(g) if do_skolem else g
+    for chunk in _chunks(skolem, 1000):
         all_triples_str = u' . '.join(map(lambda (s, p, o): u'{} {} {}'.format(s.n3(), p.n3(), o.n3()), chunk))
         query = q_tmpl % (gid, all_triples_str)
         try:
@@ -170,14 +173,25 @@ class GraphHandler(object):
         return _get_graph(self.gid, self.sparql, **kwargs)
 
     def store(self, g, delete=True):
-        _store_graph(g, self.sparql, gid=self.gid, delete=delete)
+        retry = True
+        skolem = skolemize(g)
+        while retry:
+            retry = False
+            _store_graph(skolem, self.sparql, gid=self.gid, delete=delete, do_skolem=False)
+
+            if not delete:
+                break
+
+            stored_g = _get_graph(self.gid, self.sparql, cache=None, infer=False, de_skolemize=False)
+            if len(skolem) != len(stored_g):
+                retry = True
 
     def delete(self):
         _delete_graph(self.gid, self.sparql)
 
 
 def push(sparql, g, gid=None, delete=True):
-    GraphHandler(gid, sparql).store(g, delete=delete)
+    GraphHandler(gid or g.identifier, sparql).store(g, delete=delete)
 
 
 def pull(sparql, gid, **kwargs):
