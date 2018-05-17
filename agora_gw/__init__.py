@@ -74,7 +74,7 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
             if item == 'query' or item == 'fragment':
                 query = args[0]
                 ted = self.__eco.discover(query, strict=False, lazy=False)
-                dgw = DataGateway(self.__eco.agora, ted, cache=self.__cache)
+                dgw = DataGateway(self.__eco.agora, ted, cache=self.__cache, static_fountain=True)
                 return dgw.__getattribute__(item)(*args, **kwargs)
 
         return wrapper
@@ -89,7 +89,6 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
                 return self.__data_proxy(item)
 
             return super(Gateway, self).__getattribute__(item)
-            # raise AttributeError(item)
 
     def data(self, query, **kwargs):
         ted = self.__eco.discover(query, strict=False, lazy=False)
