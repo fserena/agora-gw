@@ -15,18 +15,23 @@ log = logging.getLogger('agora.gateway.data.graph')
 def _get_graph(gid, sparql, de_skolemize=True, **kwargs):
     # type: (str, SPARQL, bool, any) -> Graph
     data_gid = gid
-    g_n3 = sparql.query("""
-        CONSTRUCT { ?s ?p ?o }
-        WHERE
-        {
-            GRAPH <%s> {
-                ?s ?p ?o
-            } .
-        }
-        """ % gid, **kwargs)
 
-    g = Graph(identifier=gid)
-    g.parse(StringIO(g_n3), format='n3')
+    if not isinstance(sparql.sparql_host, basestring):
+        g = sparql.sparql_host.get_context(URIRef(gid))
+    else:
+        g_n3 = sparql.query("""
+            CONSTRUCT { ?s ?p ?o }
+            WHERE
+            {
+                GRAPH <%s> {
+                    ?s ?p ?o
+                } .
+            }
+            """ % gid, **kwargs)
+
+        g = Graph(identifier=URIRef(gid))
+        g.parse(StringIO(g_n3), format='n3')
+
     if g:
         res = sparql.query("""
         SELECT DISTINCT ?t WHERE {
@@ -43,7 +48,7 @@ def _get_graph(gid, sparql, de_skolemize=True, **kwargs):
         return g
 
     bn_map = {}
-    deskolem = Graph(identifier=gid)
+    deskolem = Graph(identifier=URIRef(gid))
     for s, p, o in g:
         if BNODE_SKOLEM_BASE in s:
             if s not in bn_map:
@@ -76,26 +81,32 @@ def _chunks(l, n):
 
 def _store_graph(g, sparql, gid=None, delete=True, do_skolem=True):
     # type: (Graph, SPARQL, str, bool, bool) -> None
-    q_tmpl = u"""    
-    INSERT DATA
-    { GRAPH <%s> { %s } }
-    """
-    gid = gid or g.identifier
-    log.debug('Storing graph {}...'.format(gid))
-    if delete:
-        sparql.update(u"""
-        DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s ?p ?o }
-        """ % gid)
 
-    skolem = skolemize(g) if do_skolem else g
-    for chunk in _chunks(skolem, 1000):
-        all_triples_str = u' . '.join(map(lambda (s, p, o): u'{} {} {}'.format(s.n3(), p.n3(), o.n3()), chunk))
-        query = q_tmpl % (gid, all_triples_str)
-        try:
-            sparql.update(query)
-        except Exception as e:
-            print query
-            log.warn(e.message)
+    if not isinstance(sparql.update_host, basestring):
+        if delete:
+            sparql.update_host.remove_context(URIRef(gid))
+        sparql.update_host.get_context(URIRef(gid)).__iadd__(g)
+    else:
+        q_tmpl = u"""    
+        INSERT DATA
+        { GRAPH <%s> { %s } }
+        """
+        gid = gid or g.identifier
+        log.debug('Storing graph {}...'.format(gid))
+        if delete:
+            sparql.update(u"""
+            DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s ?p ?o }
+            """ % gid)
+
+        skolem = skolemize(g) if do_skolem else g
+        for chunk in _chunks(skolem, 1000):
+            all_triples_str = u' . '.join(map(lambda (s, p, o): u'{} {} {}'.format(s.n3(), p.n3(), o.n3()), chunk))
+            query = q_tmpl % (gid, all_triples_str)
+            try:
+                sparql.update(query)
+            except Exception as e:
+                print query
+                log.warn(e.message)
 
 
 def _delete_graph(gid, sparql):

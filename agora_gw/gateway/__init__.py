@@ -11,6 +11,7 @@ from agora_gw.ecosystem.discover import discover_ecosystem
 from agora_gw.ecosystem.serialize import deserialize, JSONLD
 from agora_gw.gateway.abstract import AbstractGateway
 from agora_gw.server.client import GatewayClient
+import itertools
 
 
 class Gateway(AbstractGateway):
@@ -170,7 +171,9 @@ class Gateway(AbstractGateway):
 
         gw = super(Gateway, cls).__new__(cls)
         gw.__init__()
-        gw.repository = Repository(**kwargs)
+        repo_kwargs = dict(
+            itertools.chain(kwargs.get('description', {}).iteritems(), kwargs.get('agora', {}).iteritems()))
+        gw.repository = Repository(**repo_kwargs)
         gw.VTED = VTED(gw.repository)
 
         return gw

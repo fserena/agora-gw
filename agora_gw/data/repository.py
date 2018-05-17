@@ -349,6 +349,9 @@ class Repository(object):
         if 'fountain_port' not in kwargs:
             kwargs['fountain_port'] = FOUNTAIN_PORT
 
+        if kwargs['fountain_host'] is None:
+            kwargs['persist_mode'] = False
+
         agora = Agora(**kwargs)
         r.sparql = SPARQL(**kwargs)
         r.agora = agora

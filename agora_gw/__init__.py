@@ -64,8 +64,8 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
         self.__eco = EcoGateway(**kwargs)
         if isinstance(self.__eco, EcoGateway):
             self.__eco = EcoGatewayAdapter(self.__eco)
-        if 'cache' in kwargs:
-            self.__cache = RedisCache(**kwargs['cache'])
+        if 'data_cache' in kwargs:
+            self.__cache = RedisCache(**kwargs['data_cache'])
         else:
             self.__cache = None
 

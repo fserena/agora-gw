@@ -159,6 +159,8 @@ def build_component(R, VTED, id, node_map=None, lazy=True):
 
     loader = None if lazy else R.pull
 
+    td_nodes_dict = {}
+
     try:
         matching_td = get_matching_TD(R, uri, node_map, loader=loader, lazy=lazy)
         network = VTED.network
@@ -172,7 +174,9 @@ def build_component(R, VTED, id, node_map=None, lazy=True):
                         root_path = root_path[1:]
                         suc_tds = []
                         for suc_td_id in root_path:
-                            suc_td = create_TD_from(R, get_td_node(R, suc_td_id), node_map=node_map, lazy=lazy,
+                            if suc_td_id not in node_map:
+                                node_map[suc_td_id] = get_td_node(R, suc_td_id)
+                            suc_td = create_TD_from(R, node_map[suc_td_id], node_map=node_map, lazy=lazy,
                                                     loader=loader)
                             if suc_td not in suc_tds:
                                 suc_tds.append(suc_td)
@@ -185,7 +189,9 @@ def build_component(R, VTED, id, node_map=None, lazy=True):
             if not lazy:
                 suc_td_ids = reduce(lambda x, y: x.union(set(y)), list(nx.dfs_edges(network, matching_td.id)), set())
                 for suc_td_id in suc_td_ids:
-                    suc_td = create_TD_from(R, get_td_node(R, suc_td_id), node_map=node_map, lazy=lazy, loader=loader)
+                    if suc_td_id not in node_map:
+                        node_map[suc_td_id] = get_td_node(R, suc_td_id)
+                    suc_td = create_TD_from(R, node_map[suc_td_id], node_map=node_map, lazy=lazy, loader=loader)
                     if suc_td not in suc_tds:
                         suc_tds.append(suc_td)
             yield matching_td, suc_tds
@@ -454,5 +460,5 @@ class VTED(object):
             for root in obsolete_td_based_roots:
                 self.remove_component(ted_uri, root)
 
-            self.sync(force=True)
-            self.R.expire_cache()
+        self.sync(force=True)
+        self.R.expire_cache()
