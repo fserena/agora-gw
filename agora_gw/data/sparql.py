@@ -39,7 +39,7 @@ def _update(q, update_host=UPDATE_HOST):
 
 
 def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, sparql_host=SPARQL_HOST):
-    def remote():
+    def remote(q):
         sparql = SPARQLWrapper(sparql_host)
         sparql.setRequestMethod("postdirectly")
         sparql.setMethod('POST')
@@ -67,7 +67,7 @@ def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, spa
             else:
                 return json.dumps(results['boolean']).decode('utf-8')
 
-    def local():
+    def local(q):
         graph = sparql_host
         query_str = q
         parsetree = parseQuery(query_str)
@@ -88,7 +88,7 @@ def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, spa
 
     if cache is not None:
         try:
-            ret = cache_it(cache=cache, expire=expire, namespace=namespace)(query_fn)()
+            ret = cache_it(cache=cache, expire=expire, namespace=namespace)(query_fn)(q)
         except UnicodeDecodeError:
             traceback.print_exc()
             return []

@@ -23,7 +23,6 @@ import os
 
 from agora import RedisCache
 from agora_wot.gateway import Gateway as DataGateway, AbstractGateway as AbstractDataGateway
-
 from agora_gw.gateway import Gateway as EcoGateway, AbstractGateway as AbstractEcoGateway
 
 __author__ = 'Fernando Serena'
