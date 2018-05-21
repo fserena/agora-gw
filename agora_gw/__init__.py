@@ -68,6 +68,10 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
         else:
             self.__cache = None
 
+    @property
+    def data_cache(self):
+        return self.__cache
+
     def __data_proxy(self, item):
         def wrapper(*args, **kwargs):
             if item == 'query' or item == 'fragment':
@@ -91,5 +95,8 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
 
     def data(self, query, **kwargs):
         ted = self.__eco.discover(query, strict=False, lazy=False)
+        if 'cache' in kwargs:
+            self.__cache = kwargs['cache']
+            del kwargs['cache']
         dgw = DataGateway(self.__eco.agora, ted, cache=self.__cache, **kwargs)
         return dgw
