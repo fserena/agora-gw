@@ -93,7 +93,7 @@ def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, spa
             traceback.print_exc()
             return []
     else:
-        ret = query_fn()
+        ret = query_fn(q)
 
     try:
         return json.loads(ret)
