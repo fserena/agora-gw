@@ -266,7 +266,7 @@ def learn_descriptions_from(R, desc_g):
 
     non_td_resources = defaultdict(set)
     for elm, _, cl in desc_g.triples((None, RDF.type, None)):
-        if isinstance(elm, URIRef) and (None, None, elm) not in g:
+        if isinstance(elm, URIRef) and (None, CORE.hasComponent, elm) in g:
             if cl.n3(ns) in all_types:
                 non_td_resources[elm].add(cl)
 
