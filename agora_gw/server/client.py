@@ -71,12 +71,18 @@ class GatewayClient(Client, AbstractGateway):
         g = deskolemize(g)
         return Resource.from_graph(g)
 
-    def discover(self, query, strict=False, **kwargs):
-        response = self._post_request('discover?min', query, content_type='text/plain', accept='text/turtle')
+    def discover(self, query, strict=False, lazy=True, **kwargs):
+        path = 'discover'
+        lazy_arg = 'min' if lazy else ''
+        strict_arg = 'strict' if strict else ''
+        args = ''.join([lazy_arg, strict_arg])
+        if args:
+            path += '?' + args
+        response = self._post_request(path, query, content_type='text/plain', accept='text/turtle')
         g = Graph()
         g.parse(StringIO(response), format='turtle')
         g = deskolemize(g)
-        ted = TED.from_graph(g, fetch=True, loader=self.__loader)
+        ted = TED.from_graph(g, fetch=lazy, loader=self.__loader)
         return ted
 
     @property
