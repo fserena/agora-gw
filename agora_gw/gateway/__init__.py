@@ -1,9 +1,28 @@
+"""
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+  Copyright (C) 2018 Fernando Serena
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+            http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+"""
+
+import itertools
 from multiprocessing import Lock
 
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
-from rdflib import ConjunctiveGraph, URIRef
+from rdflib import ConjunctiveGraph, URIRef, Graph
 
 from agora_gw.data.repository import CORE, Repository
 from agora_gw.ecosystem.description import learn_descriptions_from, get_td_node, get_th_node, get_th_types, VTED
@@ -11,7 +30,8 @@ from agora_gw.ecosystem.discover import discover_ecosystem
 from agora_gw.ecosystem.serialize import deserialize, JSONLD
 from agora_gw.gateway.abstract import AbstractGateway
 from agora_gw.server.client import GatewayClient
-import itertools
+
+__author__ = 'Fernando Serena'
 
 
 class Gateway(AbstractGateway):
@@ -91,13 +111,24 @@ class Gateway(AbstractGateway):
 
         return ted
 
+    def __loader(self):
+        def wrapper(*args, **kwargs):
+            try:
+                g = self.repository.pull(*args, **kwargs)
+            except Exception:
+                g = None
+
+            return g if g else Graph().load(args[0], format='application/ld+json')
+
+        return wrapper
+
     def get_description(self, tdid, lazy=True):
         td_node = get_td_node(self.__repository, tdid)
         g = self.__repository.pull(td_node, cache=True, infer=False, expire=300)
         for ns, uri in self.__repository.fountain.prefixes.items():
             g.bind(ns, uri)
 
-        return TD.from_graph(g, td_node, {}, fetch=not lazy, loader=None if lazy else self.repository.pull)
+        return TD.from_graph(g, td_node, {}, fetch=not lazy, loader=self.__loader())
 
     def update_description(self, td, mediatype=JSONLD, ted_path='/ted'):
         if not td:

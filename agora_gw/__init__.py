@@ -1,9 +1,6 @@
 """
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Ontology Engineering Group
-        http://www.oeg-upm.net/
-#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Copyright (C) 2017 Ontology Engineering Group.
+  Copyright (C) 2018 Fernando Serena
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -27,7 +24,7 @@ from agora_gw.gateway import Gateway as EcoGateway, AbstractGateway as AbstractE
 
 __author__ = 'Fernando Serena'
 
-LOG_LEVEL = int(os.environ.get('LOG_LEVEL', logging.DEBUG))
+LOG_LEVEL = int(os.environ.get('LOG_LEVEL', logging.INFO))
 
 
 class EcoGatewayAdapter(object):
@@ -77,6 +74,9 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
             if item == 'query' or item == 'fragment':
                 query = args[0]
                 ted = self.__eco.discover(query, strict=False, lazy=False)
+                if 'cache' in kwargs:
+                    self.__cache = kwargs['cache']
+                    del kwargs['cache']
                 dgw = DataGateway(self.__eco.agora, ted, cache=self.__cache, static_fountain=True)
                 return dgw.__getattribute__(item)(*args, **kwargs)
 
@@ -93,8 +93,8 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
 
             return super(Gateway, self).__getattribute__(item)
 
-    def data(self, query, **kwargs):
-        ted = self.__eco.discover(query, strict=False, lazy=False)
+    def data(self, query, strict=False, lazy=True, **kwargs):
+        ted = self.__eco.discover(query, strict=strict, lazy=lazy)
         if 'cache' in kwargs:
             self.__cache = kwargs['cache']
             del kwargs['cache']

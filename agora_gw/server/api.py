@@ -104,7 +104,7 @@ def discover(gw):
 
             min = request.args.get('min')
             min = True if min is not None else False
-            ted = gw.discover(query, strict=reachability)
+            ted = gw.discover(query, strict=reachability, lazy=min)
 
             format = TURTLE if request_wants_turtle() else JSONLD
             own_base = unicode(request.url_root)
@@ -153,7 +153,8 @@ def add_descriptions(gw):
 def get_td(gw):
     def _get_td(id):
         try:
-            g = gw.get_description(id).to_graph()
+            td = gw.get_description(id)
+            g = td.to_graph()
             format = TURTLE if request_wants_turtle() else JSONLD
             ttl = serialize_graph(g, format, frame=CORE.ThingDescription)
 
