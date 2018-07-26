@@ -21,7 +21,9 @@
 import logging
 from collections import defaultdict
 
+import networkx as nx
 from agora.engine.plan import AGP, TP, find_root_types
+from agora.engine.plan.agp import extend_uri
 from agora.graph.evaluate import traverse_part
 from rdflib import RDF, Variable
 from rdflib.plugins.sparql.algebra import translateQuery
@@ -35,13 +37,13 @@ __author__ = 'Fernando Serena'
 log = logging.getLogger('agora.gateway.discover')
 
 
-def extract_bgps(q, cache=None):
+def extract_bgps(q, cache=None, init_ns={}):
     if cache is not None and q in cache:
         return cache[q]
 
     if not isinstance(q, Query):
         parsetree = parseQuery(q)
-        query = translateQuery(parsetree, None, {})
+        query = translateQuery(parsetree, None, init_ns)
     else:
         query = q
 
@@ -80,7 +82,8 @@ def bgp_root_types(fountain, bgp):
 
 
 def query_root_types(fountain, q, bgp_cache=None):
-    types = reduce(lambda x, y: x.union(bgp_root_types(fountain, y)), extract_bgps(q, cache=bgp_cache)[0], set())
+    types = reduce(lambda x, y: x.union(bgp_root_types(fountain, y)),
+                   extract_bgps(q, cache=bgp_cache, init_ns=fountain.prefixes)[0], set())
     desc_types = describe_types(fountain, types)
     return keep_general(desc_types)
 
@@ -133,7 +136,7 @@ def contains_solutions(R, id, query, bgp_cache=None):
     return result
 
 
-def is_target_reachable(fountain, source_types, target, cache=None):
+def is_semantically_reachable(fountain, source_types, target, cache=None):
     for st in source_types:
         if cache and (st, target) in cache:
             return cache[(st, target)]
@@ -147,7 +150,46 @@ def is_target_reachable(fountain, source_types, target, cache=None):
     return False
 
 
-def search_things(R, type, q, reachability=True, reachability_cache=None, bgp_cache=None, fountain=None):
+def is_described_reachable(fountain, R, td_network, seed, type):
+    res = R.query("""
+    PREFIX core: <http://iot.linkeddata.es/def/core#>
+    SELECT DISTINCT ?g ?id WHERE {
+        GRAPH ?g {
+           [] a core:ThingDescription ;
+              core:identifier ?id ;
+              core:describes <%s>
+        }
+    }
+    """ % seed, cache=True, expire=300, infer=True)
+    rd = generate_dict(R.n3, R.ns(fountain=fountain), res)
+    try:
+        td_id = rd.keys().pop()
+    except IndexError:
+        return True  # what if the seed does not correspond to a described (TD-based) thing?
+
+    type_uri = extend_uri(type, fountain.prefixes)
+    res = R.query("""
+    PREFIX core: <http://iot.linkeddata.es/def/core#>
+    SELECT DISTINCT ?id WHERE {    
+        [] a core:ThingDescription ;
+           core:identifier ?id ;
+           core:describes [
+            a <%s>
+        ]                
+    }
+    """ % type_uri, cache=True, expire=300, infer=True)
+    target_tds = map(lambda x: x['id']['value'], res)
+    for target in target_tds:
+        try:
+            if nx.shortest_path(td_network, td_id, target):
+                return True
+        except nx.NetworkXNoPath:
+            pass
+
+    return False
+
+
+def search_things(R, type, q, td_network, reachability=True, reachability_cache=None, bgp_cache=None, fountain=None):
     res = R.query("""
        prefix core: <http://iot.linkeddata.es/def/core#>
        prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> 
@@ -179,8 +221,9 @@ def search_things(R, type, q, reachability=True, reachability_cache=None, bgp_ca
     for seed, type_ids in rd.items():
         try:
             types = {t: fountain.get_type(t) for t in type_ids if t in all_types}
-            if types and (type_n3 in types or is_target_reachable(fountain, types.keys(), type_n3,
-                                                                  cache=reachability_cache)):
+            if types and (type_n3 in types or is_semantically_reachable(fountain, types.keys(), type_n3,
+                                                                        cache=reachability_cache) and is_described_reachable(
+                fountain, R, td_network, seed, type_n3)):
                 rd[seed] = types
             else:
                 del rd[seed]
@@ -249,7 +292,7 @@ def discover_ecosystem(R, VTED, q, reachability=False, lazy=True):
 
     reachability_cache = {}
     typed_things = {
-        type['id']: search_things(R, type, q,
+        type['id']: search_things(R, type, q, VTED.network,
                                   reachability=reachability,
                                   fountain=fountain,
                                   reachability_cache=reachability_cache,
