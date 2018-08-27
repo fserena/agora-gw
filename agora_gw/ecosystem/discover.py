@@ -1,9 +1,6 @@
 """
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Ontology Engineering Group
-        http://www.oeg-upm.net/
-#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Copyright (C) 2017 Ontology Engineering Group.
+  Copyright (C) 2018 Fernando Serena
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -18,6 +15,7 @@
   limitations under the License.
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
+
 import logging
 from collections import defaultdict
 
@@ -189,6 +187,14 @@ def is_described_reachable(fountain, R, td_network, seed, type):
     return False
 
 
+def infer_types(types, fountain):
+    return set.union(*map(lambda t: set.union(set(fountain.get_type(t)['super']), types), types))
+
+def get_type_dicts(types, fountain, infer=True):
+    if infer:
+        type_ids = infer_types(types, fountain)
+    return {t: fountain.get_type(t) for t in type_ids}
+
 def search_things(R, type, q, td_network, reachability=True, reachability_cache=None, bgp_cache=None, fountain=None):
     res = R.query("""
        prefix core: <http://iot.linkeddata.es/def/core#>
@@ -220,7 +226,7 @@ def search_things(R, type, q, td_network, reachability=True, reachability_cache=
 
     for seed, type_ids in rd.items():
         try:
-            types = {t: fountain.get_type(t) for t in type_ids if t in all_types}
+            types = get_type_dicts([t for t in type_ids if t in all_types], fountain, infer=True)
             if types and (type_n3 in types or is_semantically_reachable(fountain, types.keys(), type_n3,
                                                                         cache=reachability_cache) and is_described_reachable(
                 fountain, R, td_network, seed, type_n3)):
@@ -245,7 +251,7 @@ def make_up_bgp_query(q, predicate_mask, bgp_cache=None):
         bgp_vars = filter(lambda part: isinstance(part, Variable),
                           reduce(lambda x, y: x.union(list(y)), bgp.triples, set()))
 
-        bgp_filters = reduce(lambda x, y: x.union(filters[v]), [v for v in bgp_vars if v in filters], set())
+        bgp_filters = reduce(lambda x, y: x.union(filters[y]), [v for v in bgp_vars if v in filters], set())
         filter_clause = 'FILTER(%s)' % ' && '.join(bgp_filters) if bgp_filters else ''
 
         if desc_tps:
@@ -273,7 +279,7 @@ def transform_into_graph_td_queries(R, q, bgp_cache=None):
         yield td_q % (tps_str, filter_clause)
 
 
-def discover_ecosystem(R, VTED, q, reachability=False, lazy=True):
+def discover_ecosystem(R, VTED, q, reachability=False, lazy=False):
     bgp_cache = {}
 
     fountain = R.fountain

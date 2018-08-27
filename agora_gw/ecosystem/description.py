@@ -1,9 +1,6 @@
 """
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Ontology Engineering Group
-        http://www.oeg-upm.net/
-#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Copyright (C) 2017 Ontology Engineering Group.
+  Copyright (C) 2018 Fernando Serena
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -18,6 +15,7 @@
   limitations under the License.
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
+
 import calendar
 import logging
 import os
@@ -83,6 +81,7 @@ def get_td_node(R, id):
         return URIRef(res.pop()['td']['value'])
     except IndexError:
         log.warn('No TD for identifier {}'.format(id))
+        raise AttributeError(id)
 
 
 def get_th_node(R, id):
@@ -99,6 +98,7 @@ def get_th_node(R, id):
         return URIRef(res.pop()['th']['value'])
     except IndexError:
         log.warn('No thing for TD identifier {}'.format(id))
+        raise AttributeError(id)
 
 
 def get_th_nodes(R, cache=True):
@@ -158,8 +158,6 @@ def build_component(R, VTED, id, node_map=None, lazy=True):
     suc_tds = []
 
     loader = None if lazy else R.pull
-
-    td_nodes_dict = {}
 
     try:
         matching_td = get_matching_TD(R, uri, node_map, loader=loader, lazy=lazy)
@@ -456,6 +454,10 @@ class VTED(object):
                 else:
                     self.R.push(root.to_graph())
                     self.add_component(ted_uri, eco, root.node)
+
+            promoted_td_based_root_uris = set.difference(network_roots, last_td_based_roots)
+            for root in promoted_td_based_root_uris:
+                self.add_component(ted_uri, eco, root)
 
             for root in obsolete_td_based_roots:
                 self.remove_component(ted_uri, root)

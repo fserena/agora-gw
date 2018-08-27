@@ -1,9 +1,6 @@
 """
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Ontology Engineering Group
-        http://www.oeg-upm.net/
-#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Copyright (C) 2017 Ontology Engineering Group.
+  Copyright (C) 2018 Fernando Serena
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -18,6 +15,7 @@
   limitations under the License.
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
+
 import traceback
 
 from agora.engine.fountain.onto import DuplicateVocabulary
@@ -109,7 +107,7 @@ def discover(gw):
             format = TURTLE if request_wants_turtle() else JSONLD
             own_base = unicode(request.url_root)
             ted_str = serialize_TED(ted, format, min=min, abstract=min, prefixes=gw.repository.fountain.prefixes)
-            ted_str = ted_str.decode('utf-8').replace(gw.repository.base + u'/', own_base)
+            ted_str = ted_str.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
 
             response = make_response(ted_str)
             response.headers['Content-Type'] = format
@@ -136,7 +134,7 @@ def add_descriptions(gw):
             ted_str = serialize_TED(ted, format, prefixes=gw.repository.fountain.prefixes)
 
             own_base = unicode(request.url_root)
-            ted_str = ted_str.decode('utf-8').replace(gw.repository.base + u'/', own_base)
+            ted_str = ted_str.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
             response = make_response(ted_str)
             response.headers['Content-Type'] = format
             return response
@@ -153,13 +151,13 @@ def add_descriptions(gw):
 def get_td(gw):
     def _get_td(id):
         try:
-            td = gw.get_description(id)
+            td = gw.get_description(id, fetch=False)
             g = td.to_graph()
             format = TURTLE if request_wants_turtle() else JSONLD
             ttl = serialize_graph(g, format, frame=CORE.ThingDescription)
 
             own_base = unicode(request.url_root)
-            ttl = ttl.decode('utf-8').replace(gw.repository.base + u'/', own_base)
+            ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
             response = make_response(ttl)
             response.headers['Content-Type'] = format
             return response
@@ -174,12 +172,29 @@ def get_td(gw):
     return _get_td
 
 
+def delete_td(gw):
+    def _delete_td(id):
+        try:
+            gw.delete_description(id)
+            response = make_response()
+            return response
+        except IndexError:
+            pass
+
+        response = make_response()
+        response.status_code = 404
+
+        return response
+
+    return _delete_td
+
+
 def get_ted(gw):
     def _get_ted():
         fountain = gw.repository.fountain
         try:
             local_node = URIRef(url_for('_get_ted', _external=True))
-            ted = gw.get_ted(ted_uri=local_node, fountain=fountain)
+            ted = gw.get_ted(ted_uri=local_node, fountain=fountain, lazy=True)
             g = ted.to_graph(node=local_node, fetch=False)
 
             format = TURTLE if request_wants_turtle() else JSONLD
@@ -187,7 +202,7 @@ def get_ted(gw):
             ted_str = serialize_graph(g, format, frame=CORE.ThingEcosystemDescription)
             own_base = unicode(request.url_root)
             ted_str = ted_str.decode('utf-8')
-            ted_str = ted_str.replace(gw.repository.base + u'/', own_base)
+            ted_str = ted_str.replace(gw.repository.base.rstrip('/') + u'/', own_base)
 
             response = make_response(ted_str)
             response.headers['Content-Type'] = format
@@ -207,7 +222,7 @@ def get_ted(gw):
 def get_thing(gw):
     def _get_thing(id):
         try:
-            g = gw.get_thing(id).to_graph()
+            g = gw.get_thing(id, lazy=True).to_graph()
             th_node = g.identifier
             th_types = list(g.objects(URIRef(th_node), RDF.type))
             th_type = th_types.pop() if th_types else None
@@ -216,7 +231,7 @@ def get_thing(gw):
             ttl = serialize_graph(g, format, frame=th_type)
 
             own_base = unicode(request.url_root)
-            ttl = ttl.decode('utf-8').replace(gw.repository.base + u'/', own_base)
+            ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
             response = make_response(ttl)
             response.headers['Content-Type'] = format
             return response
@@ -231,11 +246,13 @@ def get_thing(gw):
     return _get_thing
 
 
-def build(name, **kwargs):
-    gw = Gateway(**kwargs)
+def build(name, gw=None, **kwargs):
+    if gw is None:
+        gw = Gateway(**kwargs)
     app = Flask(name)
     app.route('/things/<id>')(get_thing(gw))
     app.route('/descriptions/<id>')(get_td(gw))
+    app.route('/descriptions/<id>', methods=['DELETE'])(delete_td(gw))
     app.route('/ted')(get_ted(gw))
     app.route('/discover', methods=['POST'])(discover(gw))
     app.route('/descriptions', methods=['POST'])(add_descriptions(gw))

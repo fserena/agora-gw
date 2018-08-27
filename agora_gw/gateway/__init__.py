@@ -16,13 +16,13 @@
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
 
-import itertools
 from multiprocessing import Lock
 
+from agora import Agora
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
-from rdflib import ConjunctiveGraph, URIRef, Graph
+from rdflib import ConjunctiveGraph, URIRef, Graph, BNode
 
 from agora_gw.data.repository import CORE, Repository
 from agora_gw.ecosystem.description import learn_descriptions_from, get_td_node, get_th_node, get_th_types, VTED
@@ -106,10 +106,28 @@ class Gateway(AbstractGateway):
 
         ted = learn_descriptions_from(self.__repository, g)
 
+        if self.__repository.base[-1] == '/':
+            ted_path = ted_path.lstrip('/')
         eco_node = URIRef(self.__repository.base + ted_path)
         self.__VTED.update(ted, self._get_thing_graph, eco_node)
 
         return ted
+
+    def delete_description(self, tdid, ted_path='/ted'):
+        td_node = get_td_node(self.__repository, tdid)
+        if td_node:
+            try:
+                ted_uri, eco = self.__VTED.ted_eco()
+            except EnvironmentError:
+                pass
+            else:
+                th_node = get_th_node(self.__repository, tdid)
+                self.__VTED.remove_component(ted_uri, th_node)
+                self.__repository.delete(td_node)
+                self.__repository.delete(th_node)
+
+            eco_node = URIRef(self.__repository.base + ted_path)
+            self.__VTED.update(TED(), None, eco_node)
 
     def __loader(self):
         def wrapper(*args, **kwargs):
@@ -122,13 +140,13 @@ class Gateway(AbstractGateway):
 
         return wrapper
 
-    def get_description(self, tdid, lazy=True):
+    def get_description(self, tdid, fetch=False):
         td_node = get_td_node(self.__repository, tdid)
         g = self.__repository.pull(td_node, cache=True, infer=False, expire=300)
         for ns, uri in self.__repository.fountain.prefixes.items():
             g.bind(ns, uri)
 
-        return TD.from_graph(g, td_node, {}, fetch=not lazy, loader=self.__loader())
+        return TD.from_graph(g, td_node, {}, fetch=fetch, loader=self.__loader())
 
     def update_description(self, td, mediatype=JSONLD, ted_path='/ted'):
         if not td:
@@ -137,15 +155,15 @@ class Gateway(AbstractGateway):
         g = deserialize(td, mediatype)
         ted = learn_descriptions_from(self.__repository, g)
 
+        if self.__repository.base[-1] == '/':
+            ted_path = ted_path.lstrip('/')
+
         eco_node = URIRef(self.__repository.base + ted_path)
         self.__VTED.update(ted, self._get_thing_graph, eco_node)
 
         return ted
 
-    def delete_description(self, tdid):
-        pass
-
-    def get_thing(self, tid, lazy=True):
+    def get_thing(self, tid, lazy=False):
         th_node = get_th_node(self.__repository, tid)
         g = self.__repository.pull(th_node, cache=True, infer=False, expire=300)
 
@@ -166,7 +184,11 @@ class Gateway(AbstractGateway):
         ted = discover_ecosystem(self.repository, self.VTED, query, reachability=strict, **kwargs)
         return ted
 
-    def get_ted(self, ted_uri, fountain=None, lazy=True):
+    @property
+    def ted(self):
+        return self.get_ted()
+
+    def get_ted(self, ted_uri=BNode(), fountain=None, lazy=False):
         local_node = URIRef(ted_uri)
         if fountain is None:
             fountain = self.repository.fountain
@@ -202,9 +224,31 @@ class Gateway(AbstractGateway):
 
         gw = super(Gateway, cls).__new__(cls)
         gw.__init__()
-        repo_kwargs = dict(
-            itertools.chain(kwargs.get('description', {}).iteritems(), kwargs.get('agora', {}).iteritems()))
-        gw.repository = Repository(**repo_kwargs)
+
+        # if 'fountain_host' not in engine_kwargs:
+        #     engine_kwargs['fountain_host'] = FOUNTAIN_HOST
+        #
+        # if 'fountain_port' not in engine_kwargs:
+        #     engine_kwargs['fountain_port'] = FOUNTAIN_PORT
+
+        repository_kwargs = kwargs['repository']
+        # if 'query_url' in repository_kwargs:
+        #     repository_kwargs['sparql_host'] = repository_kwargs['query_url']
+        #     del repository_kwargs['query_url']
+        #
+        # if 'update_url' in repository_kwargs:
+        #     repository_kwargs['update_host'] = kwargs['update_url']
+        #     del repository_kwargs['update_url']
+
+        # r.sparql = SPARQL(**kwargs)
+        # r.agora = agora
+
+        # repo_kwargs = dict(
+        #     itertools.chain(kwargs.get('description', {}).iteritems(), kwargs.get('agora', {}).iteritems()))
+        gw.repository = Repository(**repository_kwargs)
+        engine_kwargs = kwargs.get('engine', {})
+        agora = Agora(**engine_kwargs)
+        gw.repository.agora = agora
         gw.VTED = VTED(gw.repository)
 
         return gw

@@ -1,9 +1,6 @@
 """
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Ontology Engineering Group
-        http://www.oeg-upm.net/
-#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Copyright (C) 2017 Ontology Engineering Group.
+  Copyright (C) 2018 Fernando Serena
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -31,7 +28,7 @@ from rdflib.namespace import Namespace, OWL, DC
 from rdflib.term import Literal
 from shortuuid import uuid
 
-from agora_gw.data.graph import push as push_g, pull, delete
+from agora_gw.data.graph import push as push_g, pull, delete as delete_g
 from agora_gw.data.sparql import SPARQL
 
 __author__ = 'Fernando Serena'
@@ -142,6 +139,10 @@ class Repository(object):
         self.__ext_base = eb
 
     @property
+    def sparql(self):
+        return self._sparql
+
+    @property
     def agora(self):
         return self._agora
 
@@ -202,7 +203,7 @@ class Repository(object):
     @property
     def base(self):
         return self.__repository_base or REPOSITORY_BASE
-    
+
     @base.setter
     def base(self, b):
         self.__repository_base = b
@@ -232,12 +233,14 @@ class Repository(object):
             g.bind(prefix, uri)
         return g
 
-
     def push(self, g):
         push_g(self.sparql, g)
 
     def insert(self, g):
         push_g(self.sparql, g, delete=False)
+
+    def delete(self, gid):
+        delete_g(self.sparql, gid)
 
     @property
     def extensions(self):
@@ -302,7 +305,8 @@ class Repository(object):
         prefixes = self.agora.fountain.prefixes
         ext_ns = prefixes.get(id, EXT[id])
         self.agora.fountain.delete_vocabulary(id)
-        delete(self.sparql, ext_ns)
+        delete_g(self.sparql, ext_ns)
+        self.sparql.expire_cache()
 
     def shutdown(self):
         try:
@@ -342,17 +346,10 @@ class Repository(object):
         r.base = r_base
         ext_base = kwargs.get('extension_base', None)
         r.ext_base = ext_base
+        # if r_base is not None:
+        #     del kwargs['repository_base']
+        # if ext_base is not None:
+        #     del kwargs['extension_base']
+        r._sparql = SPARQL(**kwargs.get('data', {}))
 
-        if 'fountain_host' not in kwargs:
-            kwargs['fountain_host'] = FOUNTAIN_HOST
-
-        if 'fountain_port' not in kwargs:
-            kwargs['fountain_port'] = FOUNTAIN_PORT
-
-        if kwargs['fountain_host'] is None:
-            kwargs['persist_mode'] = False
-
-        agora = Agora(**kwargs)
-        r.sparql = SPARQL(**kwargs)
-        r.agora = agora
         return r

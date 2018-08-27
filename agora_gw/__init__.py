@@ -35,24 +35,7 @@ class EcoGatewayAdapter(object):
         if item.startswith('_'):
             return super(EcoGatewayAdapter, self).__getattribute__(item)
 
-        if item == 'get_description':
-            return lambda *args, **kwargs: self.__gw.get_description(*args, lazy=False)
-        elif item == 'get_thing':
-            return lambda *args, **kwargs: self.__gw.get_thing(*args, lazy=False)
-
         return self.__gw.__getattribute__(item)
-
-    def get_description(self):
-        def wrapper(*args, **kwargs):
-            self.__gw.get_description(*args, lazy=False, **kwargs)
-
-        return wrapper
-
-    def get_thing(self):
-        def wrapper(*args, **kwargs):
-            self.__gw.get_thing(*args, lazy=False, **kwargs)
-
-        return wrapper
 
 
 class Gateway(AbstractEcoGateway, AbstractDataGateway):
@@ -66,8 +49,16 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
             self.__cache = None
 
     @property
+    def eco(self):
+        return self.__eco
+
+    @property
     def data_cache(self):
         return self.__cache
+
+    @data_cache.setter
+    def data_cache(self, c):
+        self.__cache = c
 
     def __data_proxy(self, item):
         def wrapper(*args, **kwargs):
@@ -85,7 +76,7 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
     def __getattribute__(self, item):
         if item.startswith('_'):
             return super(Gateway, self).__getattribute__(item)
-        elif hasattr(self.__eco, item):
+        elif hasattr(AbstractEcoGateway, item):
             return self.__eco.__getattribute__(item)
         else:
             if hasattr(AbstractDataGateway, item):
@@ -93,7 +84,7 @@ class Gateway(AbstractEcoGateway, AbstractDataGateway):
 
             return super(Gateway, self).__getattribute__(item)
 
-    def data(self, query, strict=False, lazy=True, **kwargs):
+    def data(self, query, strict=False, lazy=False, **kwargs):
         ted = self.__eco.discover(query, strict=strict, lazy=lazy)
         if 'cache' in kwargs:
             self.__cache = kwargs['cache']
