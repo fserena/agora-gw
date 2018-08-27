@@ -1,3 +1,20 @@
+"""
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+  Copyright (C) 2018 Fernando Serena
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+            http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
+"""
 import logging
 import os
 from StringIO import StringIO
@@ -6,6 +23,9 @@ from urlparse import urlparse
 from rdflib import Graph, URIRef, RDF, BNode, ConjunctiveGraph
 
 from agora_gw.data.sparql import SPARQL
+
+__author__ = 'Fernando Serena'
+
 
 BNODE_SKOLEM_BASE = os.environ.get('BNODE_SKOLEM_BASE', 'http://bnodes').rstrip('/')
 
@@ -17,7 +37,7 @@ def _get_graph(gid, sparql, de_skolemize=True, **kwargs):
     data_gid = gid
 
     if not isinstance(sparql.sparql_host, basestring):
-        g = sparql.sparql_host.get_context(URIRef(gid))
+        g = sparql.sparql_host.get_context(gid)
     else:
         g_n3 = sparql.query("""
             CONSTRUCT { ?s ?p ?o }
@@ -84,8 +104,8 @@ def _store_graph(g, sparql, gid=None, delete=True, do_skolem=True):
 
     if not isinstance(sparql.update_host, basestring):
         if delete:
-            sparql.update_host.remove_context(URIRef(gid))
-        sparql.update_host.get_context(URIRef(gid)).__iadd__(g)
+            sparql.update_host.remove_context(sparql.update_host.get_context(gid))
+        sparql.update_host.get_context(gid).__iadd__(g)
     else:
         q_tmpl = u"""    
         INSERT DATA
@@ -112,6 +132,9 @@ def _store_graph(g, sparql, gid=None, delete=True, do_skolem=True):
 def _delete_graph(gid, sparql):
     sparql.update(u"""
     DELETE { GRAPH <%s> { ?s ?p ?o }} WHERE { ?s ?p ?o }
+    """ % gid)
+    sparql.update(u"""
+    DELETE WHERE { ?s ?p <%s> }
     """ % gid)
 
 
