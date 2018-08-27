@@ -22,11 +22,7 @@ from collections import defaultdict
 import networkx as nx
 from agora.engine.plan import AGP, TP, find_root_types
 from agora.engine.plan.agp import extend_uri
-from agora.graph.evaluate import traverse_part
 from rdflib import RDF, Variable
-from rdflib.plugins.sparql.algebra import translateQuery
-from rdflib.plugins.sparql.parser import parseQuery
-from rdflib.plugins.sparql.sparql import Query
 
 from agora_gw.ecosystem.description import build_component, build_TED
 
@@ -36,6 +32,11 @@ log = logging.getLogger('agora.gateway.discover')
 
 
 def extract_bgps(q, cache=None, init_ns={}):
+    from agora.graph.evaluate import traverse_part
+    from rdflib.plugins.sparql.algebra import translateQuery
+    from rdflib.plugins.sparql.parser import parseQuery
+    from rdflib.plugins.sparql.sparql import Query
+
     if cache is not None and q in cache:
         return cache[q]
 

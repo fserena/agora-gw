@@ -27,8 +27,6 @@ import requests
 from SPARQLWrapper import SPARQLWrapper, JSON, N3
 from agora import get_kv
 from rdflib import ConjunctiveGraph, URIRef
-from rdflib.plugins.sparql.algebra import translateQuery, translateUpdate
-from rdflib.plugins.sparql.parser import parseQuery, parseUpdate
 from redis_cache import cache_it, DEFAULT_EXPIRY, SimpleCache as BaseSimpleCache, RedisNoConnException, \
     RedisConnect as BaseRedisConnect, redis
 
@@ -58,6 +56,9 @@ def _update(q, update_host=UPDATE_HOST):
         return res
 
     def local():
+        from rdflib.plugins.sparql.parser import parseUpdate
+        from rdflib.plugins.sparql.algebra import translateUpdate
+
         graph = update_host
         update_str = q
 
@@ -109,6 +110,9 @@ def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, spa
                 return json.dumps(results['boolean']).decode('utf-8')
 
     def local(q):
+        from rdflib.plugins.sparql.parser import parseQuery
+        from rdflib.plugins.sparql.algebra import translateQuery
+
         graph = sparql_host
         query_str = q
         parsetree = parseQuery(query_str)
