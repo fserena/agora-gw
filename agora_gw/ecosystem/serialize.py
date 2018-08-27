@@ -1,9 +1,6 @@
 """
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Ontology Engineering Group
-        http://www.oeg-upm.net/
-#-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
-  Copyright (C) 2017 Ontology Engineering Group.
+  Copyright (C) 2018 Fernando Serena
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -209,17 +206,27 @@ def serialize_TED(ted, format, td_nodes=None, th_nodes=None, min=False, abstract
     return serialize_graph(g, format, frame=CORE.ThingEcosystemDescription)
 
 
-def serialize_graph(g, format=TURTLE, frame=None):
+def serialize_graph(g, format=TURTLE, frame=None, skolem=True):
+    if skolem:
+        cg = skolemize(g)
+    else:
+        cg = ConjunctiveGraph()
+        cg.__iadd__(g)
+
     context = build_graph_context(g)
-    cg = skolemize(g)
+
+    if format == TURTLE:
+        for prefix, uri in g.namespaces():
+            if prefix in context:
+                cg.bind(prefix, uri)
+
+        return cg.serialize(format='turtle')
+
     ted_nquads = cg.serialize(format='nquads')
     ld = jsonld.from_rdf(ted_nquads)
     if frame is not None:
         ld = jsonld.frame(ld, {'context': context, '@type': str(frame)})
     ld = jsonld.compact(ld, context)
-
-    if format == TURTLE:
-        return ld_triples(ld).serialize(format='turtle')
 
     return json.dumps(ld, indent=3, sort_keys=True)
 
