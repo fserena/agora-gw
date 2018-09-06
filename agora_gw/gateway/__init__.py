@@ -225,26 +225,7 @@ class Gateway(AbstractGateway):
         gw = super(Gateway, cls).__new__(cls)
         gw.__init__()
 
-        # if 'fountain_host' not in engine_kwargs:
-        #     engine_kwargs['fountain_host'] = FOUNTAIN_HOST
-        #
-        # if 'fountain_port' not in engine_kwargs:
-        #     engine_kwargs['fountain_port'] = FOUNTAIN_PORT
-
-        repository_kwargs = kwargs['repository']
-        # if 'query_url' in repository_kwargs:
-        #     repository_kwargs['sparql_host'] = repository_kwargs['query_url']
-        #     del repository_kwargs['query_url']
-        #
-        # if 'update_url' in repository_kwargs:
-        #     repository_kwargs['update_host'] = kwargs['update_url']
-        #     del repository_kwargs['update_url']
-
-        # r.sparql = SPARQL(**kwargs)
-        # r.agora = agora
-
-        # repo_kwargs = dict(
-        #     itertools.chain(kwargs.get('description', {}).iteritems(), kwargs.get('agora', {}).iteritems()))
+        repository_kwargs = kwargs.get('repository', {})
         gw.repository = Repository(**repository_kwargs)
         engine_kwargs = kwargs.get('engine', {})
         agora = Agora(**engine_kwargs)
