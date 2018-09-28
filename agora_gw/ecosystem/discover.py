@@ -191,10 +191,12 @@ def is_described_reachable(fountain, R, td_network, seed, type):
 def infer_types(types, fountain):
     return set.union(*map(lambda t: set.union(set(fountain.get_type(t)['super']), types), types))
 
+
 def get_type_dicts(types, fountain, infer=True):
     if infer:
         type_ids = infer_types(types, fountain)
     return {t: fountain.get_type(t) for t in type_ids}
+
 
 def search_things(R, type, q, td_network, reachability=True, reachability_cache=None, bgp_cache=None, fountain=None):
     res = R.query("""

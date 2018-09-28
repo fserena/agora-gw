@@ -175,7 +175,8 @@ class Repository(object):
                 }
                 """)
         remote_vocabs = set([URIRef(r['g']['value']) for r in res])
-        remote_delta = remote_vocabs.difference(extension_vocabs)
+        remote_ext_vocabs = set(filter(lambda v: v.startswith(self.ext_base), remote_vocabs))
+        remote_delta = remote_ext_vocabs.difference(extension_vocabs)
         for rv in remote_delta:
             rg = self.pull(rv)
             try:
@@ -190,10 +191,10 @@ class Repository(object):
                     if self.ext_base in rv:
                         ext_id = rv.replace(self.ext_base, '').lstrip('/').lstrip('#')
 
-            if ext_id is not None:
+            if ext_id is not None and ext_id not in extension_prefixes:
                 self.learn(rg, ext_ns=rv, ext_id=ext_id, push=False)
 
-        local_delta = extension_vocabs.difference(remote_vocabs)
+        local_delta = extension_vocabs.difference(remote_ext_vocabs)
         for lv in local_delta:
             ext_g = self.get_extension(rev_prefixes.get(lv, lv.replace(EXT, '')))
             g = Graph(identifier=lv)
