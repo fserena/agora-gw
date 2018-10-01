@@ -196,10 +196,12 @@ class Repository(object):
 
         local_delta = extension_vocabs.difference(remote_ext_vocabs)
         for lv in local_delta:
-            ext_g = self.get_extension(rev_prefixes.get(lv, lv.replace(EXT, '')))
-            g = Graph(identifier=lv)
-            g.__iadd__(ext_g)
-            push_g(self.sparql, g)
+            lv_prefix = rev_prefixes.get(lv, None)
+            if lv_prefix and lv_prefix not in extension_prefixes:
+                ext_g = self.get_extension(rev_prefixes.get(lv, lv.replace(EXT, '')))
+                g = Graph(identifier=lv)
+                g.__iadd__(ext_g)
+                push_g(self.sparql, g)
 
     @property
     def base(self):
