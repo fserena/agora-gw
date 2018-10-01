@@ -37,7 +37,8 @@ class GatewayClient(Client, AbstractGateway):
 
     def __loader(self, uri):
         g = request_loader(uri)
-        return deskolemize(g)
+        if g:
+            return deskolemize(g)
 
     def add_extension(self, eid, g):
         response = self._put_request('extensions/{}'.format(eid), g.serialize(format='turtle'))
@@ -97,7 +98,7 @@ class GatewayClient(Client, AbstractGateway):
         path = 'discover'
         lazy_arg = 'min' if lazy else ''
         strict_arg = 'strict' if strict else ''
-        args = ''.join([lazy_arg, strict_arg])
+        args = '&'.join([lazy_arg, strict_arg])
         if args:
             path += '?' + args
         response = self._post_request(path, query, content_type='text/plain', accept='text/turtle')

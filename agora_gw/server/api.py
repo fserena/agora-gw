@@ -97,12 +97,12 @@ def discover(gw):
     def _discover():
         query = request.data
         try:
-            reachability = request.args.get('strict')
-            reachability = False if reachability is not None else True
+            strict = request.args.get('strict')
+            strict = True if strict is not None else False
 
             min = request.args.get('min')
             min = True if min is not None else False
-            ted = gw.discover(query, strict=reachability, lazy=min)
+            ted = gw.discover(query, strict=strict, lazy=min)
 
             format = TURTLE if request_wants_turtle() else JSONLD
             own_base = unicode(request.url_root)
@@ -207,7 +207,7 @@ def get_ted(gw):
             response = make_response(ted_str)
             response.headers['Content-Type'] = format
             return response
-        except (EnvironmentError, IndexError):
+        except (EnvironmentError, IndexError, AttributeError):
             traceback.print_exc()
             pass
 
@@ -235,7 +235,8 @@ def get_thing(gw):
             response = make_response(ttl)
             response.headers['Content-Type'] = format
             return response
-        except IndexError:
+        except (IndexError, AttributeError):
+            traceback.print_exc()
             pass
 
         response = make_response()

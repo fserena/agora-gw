@@ -181,7 +181,7 @@ class Gateway(AbstractGateway):
         if not query:
             raise AttributeError('no query provided')
 
-        ted = discover_ecosystem(self.repository, self.VTED, query, reachability=strict, **kwargs)
+        ted = discover_ecosystem(self.repository, self.VTED, query, reachability=not strict, **kwargs)
         return ted
 
     @property
