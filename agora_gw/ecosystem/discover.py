@@ -22,7 +22,7 @@ from collections import defaultdict
 import networkx as nx
 from agora.engine.plan import AGP, TP, find_root_types
 from agora.engine.plan.agp import extend_uri
-from rdflib import RDF, Variable
+from rdflib import RDF, Variable, BNode
 
 from agora_gw.ecosystem.description import build_component, build_TED
 
@@ -247,8 +247,22 @@ def search_things(R, type, q, td_network, reachability=True, reachability_cache=
     return final_rd
 
 
+def fix_tp_serialization(tp, tp_str, bnode_map={}):
+    s, p, o = tp
+
+    fix = tp_str
+    for node in [s, o]:
+        if isinstance(node, BNode) and node not in bnode_map:
+            bnode_map[node] = 'b' + str(len(bnode_map))
+
+        node_str = str(node)
+        fix = fix.replace(node_str, bnode_map.get(node, node_str))
+    return fix
+
+
 def make_up_bgp_query(q, predicate_mask, bgp_cache=None):
     bgps, filters = extract_bgps(q, cache=bgp_cache)
+    tp_fix_map = {}
     for bgp in bgps:
         desc_tps = filter(lambda tp: tp[1] in predicate_mask, bgp.triples)
         bgp_vars = filter(lambda part: isinstance(part, Variable),
@@ -258,7 +272,7 @@ def make_up_bgp_query(q, predicate_mask, bgp_cache=None):
         filter_clause = 'FILTER(%s)' % ' && '.join(bgp_filters) if bgp_filters else ''
 
         if desc_tps:
-            tps_str = ' .\n'.join([str(TP(*tp)) for tp in desc_tps])
+            tps_str = ' .\n'.join([fix_tp_serialization(tp, str(TP(*tp)), tp_fix_map) for tp in desc_tps])
             yield tps_str, filter_clause
 
 
