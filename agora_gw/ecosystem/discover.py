@@ -264,7 +264,7 @@ def make_up_bgp_query(q, predicate_mask, bgp_cache=None):
     bgps, filters = extract_bgps(q, cache=bgp_cache)
     tp_fix_map = {}
     for bgp in bgps:
-        desc_tps = filter(lambda tp: tp[1] in predicate_mask, bgp.triples)
+        desc_tps = filter(lambda tp: tp[1] in predicate_mask or tp[1] == RDF.type, bgp.triples)
         bgp_vars = filter(lambda part: isinstance(part, Variable),
                           reduce(lambda x, y: x.union(list(y)), bgp.triples, set()))
 
