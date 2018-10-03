@@ -278,8 +278,6 @@ def make_up_bgp_query(q, predicate_mask, bgp_cache=None):
 
 def transform_into_specific_queries(R, id, q, bgp_cache=None):
     desc_predicates = R.thing_describing_predicates(id)
-    if RDF.type in desc_predicates:
-        desc_predicates.remove(RDF.type)
 
     td_q = """SELECT DISTINCT * WHERE { GRAPH <%s> { %s  %s } }"""
     for tps_str, filter_clause in make_up_bgp_query(q, desc_predicates, bgp_cache=bgp_cache):
@@ -288,8 +286,6 @@ def transform_into_specific_queries(R, id, q, bgp_cache=None):
 
 def transform_into_graph_td_queries(R, q, bgp_cache=None):
     desc_predicates = R.describing_predicates
-    if RDF.type in desc_predicates:
-        desc_predicates.remove(RDF.type)
 
     td_q = """SELECT DISTINCT ?g { GRAPH ?g { %s  %s } }"""
     for tps_str, filter_clause in make_up_bgp_query(q, desc_predicates, bgp_cache=bgp_cache):

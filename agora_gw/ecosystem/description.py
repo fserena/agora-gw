@@ -24,15 +24,15 @@ from datetime import datetime
 from multiprocessing import Lock
 
 import networkx as nx
+from agora.engine.plan.agp import extend_uri
+from agora_gw.data.graph import canonize_node
+from agora_gw.data.repository import CORE
 from agora_wot.blocks.eco import request_loader, Ecosystem
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
 from rdflib import BNode, URIRef, Graph, RDF, RDFS
 from redis_cache import cache_it, SimpleCache
-
-from agora_gw.data.graph import canonize_node
-from agora_gw.data.repository import CORE
 
 __author__ = 'Fernando Serena'
 
@@ -341,6 +341,25 @@ def get_th_types(R, th_uri, **kwargs):
     return [URIRef(r['type']['value']) for r in res if r['type']['value'] != str(RDFS.Resource)]
 
 
+def materialize_th_types(R, ids):
+    for th_id in ids:
+        g = R.pull(th_id)
+        prev_len = len(g)
+        prefixes = R.agora.fountain.prefixes
+        for s, p, o in g.triples((None, RDF.type, None)):
+            type_n3 = g.qname(o)
+            try:
+                type_super = R.agora.fountain.get_type(type_n3)['super']
+                for ts in type_super:
+                    ts_triple = (s, p, URIRef(extend_uri(ts, prefixes)))
+                    if ts_triple not in g:
+                        g.add(ts_triple)
+            except TypeError:
+                pass
+        if len(g) > prev_len:
+            R.push(g)
+
+
 class VTED(object):
     def __init__(self, R):
         self.R = R
@@ -351,6 +370,9 @@ class VTED(object):
             log.info('[{}] Syncing VTED...'.format(ts))
             META['network'] = self._network(cache=not force)
             META['roots'] = self._roots(cache=not force)
+            td_th_ids = set(map(lambda x: x[2], get_td_ids(self.R, cache=not force)))
+            root_ids = set(map(lambda x: x[0], META['roots']))
+            materialize_th_types(self.R, td_th_ids.union(root_ids))
             META['ts'] = ts
             log.info('[{}] Syncing completed'.format(ts))
 
