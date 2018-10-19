@@ -347,14 +347,14 @@ def materialize_th_types(R, ids):
         prev_len = len(g)
         prefixes = R.agora.fountain.prefixes
         for s, p, o in g.triples((None, RDF.type, None)):
-            type_n3 = g.qname(o)
             try:
+                type_n3 = g.qname(o)
                 type_super = R.agora.fountain.get_type(type_n3)['super']
                 for ts in type_super:
                     ts_triple = (s, p, URIRef(extend_uri(ts, prefixes)))
                     if ts_triple not in g:
                         g.add(ts_triple)
-            except TypeError:
+            except Exception:
                 pass
         if len(g) > prev_len:
             R.push(g)
