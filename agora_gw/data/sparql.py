@@ -41,6 +41,8 @@ UPDATE_HOST = os.environ.get('UPDATE_HOST')
 QUERY_CACHE_HOST = os.environ.get('QUERY_CACHE_HOST', 'localhost')
 QUERY_CACHE_PORT = int(os.environ.get('QUERY_CACHE_PORT', 6379))
 QUERY_CACHE_NUMBER = int(os.environ.get('QUERY_CACHE_NUMBER', 8))
+QUERY_CACHE_EXPIRE = int(os.environ.get('QUERY_CACHE_EXPIRE', 3600))
+
 
 log = logging.getLogger('agora.gateway.data.sparql')
 
@@ -80,7 +82,7 @@ def _update(q, update_host=UPDATE_HOST):
     return query_fn()
 
 
-def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, sparql_host=SPARQL_HOST):
+def _query(q, cache=None, infer=True, expire=QUERY_CACHE_EXPIRE, namespace=None, sparql_host=SPARQL_HOST):
     def remote(q):
         sparql = SPARQLWrapper(sparql_host)
         sparql.setRequestMethod("postdirectly")
@@ -102,12 +104,12 @@ def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, spa
             raise e
 
         if isinstance(results, str):
-            return results.decode('utf-8')
+            return results.decode('utf-8').encode('utf-8', 'replace')
         else:
             if 'results' in results:
-                return json.dumps(results["results"]["bindings"]).decode('utf-8')
+                return json.dumps(results["results"]["bindings"]).decode('utf-8').encode('utf-8', 'replace')
             else:
-                return json.dumps(results['boolean']).decode('utf-8')
+                return json.dumps(results['boolean']).decode('utf-8').encode('utf-8', 'replace')
 
     def local(q):
         from rdflib.plugins.sparql.parser import parseQuery
@@ -125,9 +127,9 @@ def _query(q, cache=None, infer=True, expire=DEFAULT_EXPIRY, namespace=None, spa
         results = json.loads(graph.query(query_str).serialize(format='json'))
 
         if 'results' in results:
-            return json.dumps(results["results"]["bindings"]).decode('utf-8')
+            return json.dumps(results["results"]["bindings"]).decode('utf-8').encode('utf-8', 'replace')
         else:
-            return json.dumps(results['boolean']).decode('utf-8')
+            return json.dumps(results['boolean']).decode('utf-8').encode('utf-8', 'replace')
 
     query_fn = local if isinstance(sparql_host, ConjunctiveGraph) else remote
 
@@ -155,9 +157,9 @@ class SPARQL(object):
             self.sparql_host = get_triple_store(persist_mode=persist_mode, base=base, path=path)
             self.update_host = self.sparql_host
 
-        self.cache = SimpleCache(limit=10000, expire=60 * 60, hashkeys=True, **cache)
+        self.cache = SimpleCache(limit=10000, expire=QUERY_CACHE_EXPIRE, hashkeys=True, **cache)
 
-    def query(self, q, cache=True, infer=True, expire=DEFAULT_EXPIRY, namespace=None):
+    def query(self, q, cache=True, infer=True, expire=QUERY_CACHE_EXPIRE, namespace=None):
         cache = self.cache if cache else None
 
         return _query(q, cache=cache, infer=infer, expire=expire, namespace=namespace, sparql_host=self.sparql_host)
@@ -177,7 +179,7 @@ class SPARQL(object):
 class SimpleCache(BaseSimpleCache):
     def __init__(self,
                  limit=10000,
-                 expire=DEFAULT_EXPIRY,
+                 expire=QUERY_CACHE_EXPIRE,
                  hashkeys=False,
                  host=None,
                  port=None,
