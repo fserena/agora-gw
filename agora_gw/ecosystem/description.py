@@ -25,6 +25,7 @@ from multiprocessing import Lock
 
 import networkx as nx
 from agora.engine.plan.agp import extend_uri
+
 from agora_gw.data.graph import canonize_node
 from agora_gw.data.repository import CORE
 from agora_wot.blocks.eco import request_loader, Ecosystem
@@ -33,24 +34,27 @@ from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
 from rdflib import BNode, URIRef, Graph, RDF, RDFS
 from redis_cache import cache_it, SimpleCache
+import traceback
 
 __author__ = 'Fernando Serena'
 
+
+def now():
+    return calendar.timegm(datetime.utcnow().timetuple())
+
+
 META = {'network': None, 'roots': None, 'ts': None}
+SYNC = {'ts': 0}
 lock = Lock()
 
 log = logging.getLogger('agora.gateway.description')
 
-QUERY_CACHE_HOST = os.environ.get('QUERY_CACHE_HOST', 'localhost')
-QUERY_CACHE_NUMBER = int(os.environ.get('QUERY_CACHE_NUMBER', 8))
-
-cache = SimpleCache(limit=10000, expire=60 * 60, hashkeys=True, host=QUERY_CACHE_HOST, port=6379,
-                    db=QUERY_CACHE_NUMBER, namespace='desc')
+QUERY_CACHE_EXPIRE = int(os.environ.get('QUERY_CACHE_EXPIRE', 3600))
 
 
 def get_context(R):
     def wrapper(uri):
-        g = R.pull(uri, cache=True, infer=False, expire=300)
+        g = R.pull(uri, cache=True, infer=False, expire=QUERY_CACHE_EXPIRE)
         if not g:
             g = request_loader(uri)
         return g
@@ -63,7 +67,7 @@ def get_td_nodes(R, cache=True):
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT DISTINCT ?td WHERE {
         ?td a core:ThingDescription
-    }""", cache=cache, infer=False, expire=300)
+    }""", cache=cache, infer=False, expire=QUERY_CACHE_EXPIRE)
 
     return map(lambda r: r['td']['value'], res)
 
@@ -107,7 +111,7 @@ def get_th_nodes(R, cache=True):
        SELECT DISTINCT ?th WHERE {
            [] a core:ThingDescription ;
                core:describes ?th
-       }""", cache=cache, infer=False, expire=300)
+       }""", cache=cache, infer=False, expire=QUERY_CACHE_EXPIRE)
 
     return map(lambda r: r['th']['value'], res)
 
@@ -120,7 +124,7 @@ def is_root(R, th_uri):
            core:describes [
               core:hasComponent <%s>
            ]               
-    }""" % th_uri, cache=True, infer=False, expire=300)
+    }""" % th_uri, cache=True, infer=False, expire=QUERY_CACHE_EXPIRE)
     return res
 
 
@@ -132,8 +136,8 @@ def create_TD_from(R, td_uri, node_map, lazy=True, **kwargs):
 
     log.debug('Creating TD for {}...'.format(td_uri))
     th_uri = get_td_thing(R, td_uri)
-    g = R.pull(th_uri, cache=True, infer=False, expire=300)
-    g.__iadd__(R.pull(td_uri, cache=True, infer=False, expire=300))
+    g = R.pull(th_uri, cache=True, infer=False, expire=QUERY_CACHE_EXPIRE)
+    g.__iadd__(R.pull(td_uri, cache=True, infer=False, expire=QUERY_CACHE_EXPIRE))
 
     return TD.from_graph(g, node=URIRef(td_uri), node_map=node_map, fetch=not lazy, **kwargs)
 
@@ -146,7 +150,7 @@ def get_matching_TD(R, th_uri, node_map={}, **kwargs):
             [] a core:ThingDescription ;
                core:describes <%s>
         }
-    }""" % th_uri, cache=True, infer=False, expire=300)
+    }""" % th_uri, cache=True, infer=False, expire=QUERY_CACHE_EXPIRE)
     td_uri = res.pop()['g']['value']
     return create_TD_from(R, td_uri, node_map, **kwargs)
 
@@ -231,7 +235,7 @@ def learn_descriptions_from(R, desc_g):
 
     node_map = {}
     sub_eco = Ecosystem()
-    td_nodes = g.subjects(RDF.type, CORE.ThingDescription)
+    td_nodes = list(g.subjects(RDF.type, CORE.ThingDescription))
     for td_node in td_nodes:
         try:
             skolem_id = list(g.objects(td_node, CORE.identifier)).pop()
@@ -277,13 +281,12 @@ def learn_descriptions_from(R, desc_g):
     return ted
 
 
-def now():
-    return calendar.timegm(datetime.utcnow().timetuple())
-
-
-@cache_it(cache=cache, expire=300)
 def _sync_VTED():
-    return now()
+    n = now()
+    if n - SYNC['ts'] >= QUERY_CACHE_EXPIRE:
+        SYNC['ts'] = n
+
+    return SYNC['ts']
 
 
 def get_td_ids(R, cache=True):
@@ -295,7 +298,7 @@ def get_td_ids(R, cache=True):
               core:identifier ?id ;
               core:describes ?th
         }
-    }""", cache=cache, infer=False, expire=300)
+    }""", cache=cache, infer=False, expire=QUERY_CACHE_EXPIRE)
 
     return map(lambda r: (r['g']['value'], r['id']['value'], r['th']['value']), res)
 
@@ -305,7 +308,7 @@ def get_resource_transforms(R, td, cache=True):
     PREFIX map: <http://iot.linkeddata.es/def/wot-mappings#>
     SELECT DISTINCT ?t FROM <%s> WHERE {                        
        [] map:valuesTransformedBy ?t            
-    }""" % td, cache=cache, infer=False, expire=300, namespace='network')
+    }""" % td, cache=cache, infer=False, expire=QUERY_CACHE_EXPIRE, namespace='network')
     return map(lambda r: r['t']['value'], res)
 
 
@@ -337,7 +340,7 @@ def get_th_types(R, th_uri, **kwargs):
     PREFIX core: <http://iot.linkeddata.es/def/core#>
     SELECT DISTINCT ?type WHERE {
       <%s> a ?type                 
-    }""" % th_uri, cache=True, expire=300, **kwargs)
+    }""" % th_uri, cache=True, expire=QUERY_CACHE_EXPIRE, **kwargs)
     return [URIRef(r['type']['value']) for r in res if r['type']['value'] != str(RDFS.Resource)]
 
 
@@ -366,7 +369,7 @@ class VTED(object):
 
     def __sync_VTED(self, force=False):
         ts = now()
-        if force or ts - _sync_VTED() > 300 or META['ts'] is None:
+        if force or ts - _sync_VTED() > QUERY_CACHE_EXPIRE or META['ts'] is None:
             log.info('[{}] Syncing VTED...'.format(ts))
             META['network'] = self._network(cache=not force)
             META['roots'] = self._roots(cache=not force)
@@ -430,7 +433,7 @@ class VTED(object):
                   core:hasComponent ?root
                ] .
                OPTIONAL { ?td core:describes ?root }               
-        }""", cache=cache, infer=False, expire=300, namespace='eco')
+        }""", cache=cache, infer=False, expire=QUERY_CACHE_EXPIRE, namespace='eco')
         roots = map(lambda r: (r['root']['value'], r.get('td', {}).get('value', None)), res)
         return roots
 

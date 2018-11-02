@@ -16,220 +16,273 @@
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
 
-from multiprocessing import Lock
-
-from agora import Agora
-from agora_wot.blocks.resource import Resource
+from agora import RedisCache, Agora
+from agora.engine.plan.agp import extend_uri
 from agora_wot.blocks.td import TD
-from agora_wot.blocks.ted import TED
-from rdflib import ConjunctiveGraph, URIRef, Graph, BNode
+from agora_wot.gateway import DataGateway
 
-from agora_gw.data.repository import CORE, Repository
-from agora_gw.ecosystem.description import learn_descriptions_from, get_td_node, get_th_node, get_th_types, VTED
-from agora_gw.ecosystem.discover import discover_ecosystem
-from agora_gw.ecosystem.serialize import deserialize, JSONLD
-from agora_gw.gateway.abstract import AbstractGateway
-from agora_gw.server.client import GatewayClient
+from agora_gw.gateway.add import add_access_mapping, add_mapping
+from agora_gw.gateway.discover import discover_seeds
+from agora_gw.gateway.eco import EcoGateway, AbstractEcoGateway
+from agora_gw.gateway.errors import GatewayError, NotFoundError, ConflictError
 
 __author__ = 'Fernando Serena'
 
 
-class Gateway(AbstractGateway):
-
+class Gateway(object):
     def __init__(self, **kwargs):
-        self.__lock = Lock()
-
-    @property
-    def agora(self):
-        return self.repository.agora
-
-    @property
-    def repository(self):
-        return self.__repository
-
-    @repository.setter
-    def repository(self, r):
-        self.__repository = r
-
-    @property
-    def VTED(self):
-        return self.__VTED
-
-    @VTED.setter
-    def VTED(self, vted):
-        self.__VTED = vted
-
-    def add_extension(self, eid, g):
-        if g:
-            self.__repository.learn(g, ext_id=eid)
-            self.__VTED.sync(force=True)
+        self.__eco = EcoGateway(**kwargs)
+        if 'data_cache' in kwargs:
+            self.__cache = RedisCache(**kwargs['data_cache'])
         else:
-            raise AttributeError('no vocabulary provided')
-
-    def update_extension(self, eid, g):
-        if g:
-            self.__repository.learn(g, ext_id=eid)
-            self.__VTED.sync(force=True)
-        else:
-            raise AttributeError('no vocabulary provided')
-
-    def delete_extension(self, eid):
-        self.__repository.delete_extension(eid)
-
-    def get_extension(self, eid):
-        ttl = self.__repository.get_extension(eid)
-        return ttl
+            self.__cache = None
 
     @property
-    def extensions(self):
-        return self.__repository.extensions
-
-    def _get_thing_graph(self, td):
-        g = td.resource.to_graph()
-
-        def_g = ConjunctiveGraph(identifier=td.resource.node)
-        for ns, uri in self.__repository.agora.fountain.prefixes.items():
-            def_g.bind(ns, uri)
-
-        for s, p, o in g:
-            def_g.add((s, p, o))
-
-        td_node = td.node
-
-        if not list(def_g.objects(td.resource.node, CORE.describedBy)):
-            def_g.add((td.resource.node, CORE.describedBy, td_node))
-        return def_g
-
-    def add_description(self, g, ted_path='/ted'):
-        if not g:
-            raise AttributeError('no description/s provided')
-
-        ted = learn_descriptions_from(self.__repository, g)
-
-        if self.__repository.base[-1] == '/':
-            ted_path = ted_path.lstrip('/')
-        eco_node = URIRef(self.__repository.base + ted_path)
-        self.__VTED.update(ted, self._get_thing_graph, eco_node)
-
-        return ted
-
-    def delete_description(self, tdid, ted_path='/ted'):
-        td_node = get_td_node(self.__repository, tdid)
-        if td_node:
-            try:
-                ted_uri, eco = self.__VTED.ted_eco()
-            except EnvironmentError:
-                pass
-            else:
-                th_node = get_th_node(self.__repository, tdid)
-                self.__VTED.remove_component(ted_uri, th_node)
-                self.__repository.delete(td_node)
-                self.__repository.delete(th_node)
-
-            eco_node = URIRef(self.__repository.base + ted_path)
-            self.__VTED.update(TED(), None, eco_node)
-
-    def __loader(self):
-        def wrapper(*args, **kwargs):
-            try:
-                g = self.repository.pull(*args, **kwargs)
-            except Exception:
-                g = None
-
-            return g if g else Graph().load(args[0], format='application/ld+json')
-
-        return wrapper
-
-    def get_description(self, tdid, fetch=False):
-        td_node = get_td_node(self.__repository, tdid)
-        g = self.__repository.pull(td_node, cache=True, infer=False, expire=300)
-        for ns, uri in self.__repository.fountain.prefixes.items():
-            g.bind(ns, uri)
-
-        return TD.from_graph(g, td_node, {}, fetch=fetch, loader=self.__loader())
-
-    def update_description(self, td, mediatype=JSONLD, ted_path='/ted'):
-        if not td:
-            raise AttributeError('no description/s provided')
-
-        g = deserialize(td, mediatype)
-        ted = learn_descriptions_from(self.__repository, g)
-
-        if self.__repository.base[-1] == '/':
-            ted_path = ted_path.lstrip('/')
-
-        eco_node = URIRef(self.__repository.base + ted_path)
-        self.__VTED.update(ted, self._get_thing_graph, eco_node)
-
-        return ted
-
-    def get_thing(self, tid, lazy=False):
-        th_node = get_th_node(self.__repository, tid)
-        g = self.__repository.pull(th_node, cache=True, infer=False, expire=300)
-
-        for prefix, ns in self.__repository.fountain.prefixes.items():
-            g.bind(prefix, ns)
-
-        if not list(g.objects(th_node, CORE.describedBy)):
-            td_node = get_td_node(self.__repository, tid)
-            g.add((th_node, CORE.describedBy, td_node))
-
-        return Resource.from_graph(g, th_node, {}, fetch=not lazy, loader=None if lazy else self.repository.pull)
-
-    def discover(self, query, strict=False, **kwargs):
-        # type: (str, bool) -> TED
-        if not query:
-            raise AttributeError('no query provided')
-
-        ted = discover_ecosystem(self.repository, self.VTED, query, reachability=not strict, **kwargs)
-        return ted
+    def eco(self):
+        # type: () -> AbstractEcoGateway
+        return self.__eco
 
     @property
     def ted(self):
-        return self.get_ted()
+        # type: () -> TED
+        try:
+            return self.__eco.ted
+        except GatewayError as e:
+            raise e
+        except Exception as e:
+            raise GatewayError(e.message)
 
-    def get_ted(self, ted_uri=BNode(), fountain=None, lazy=False):
-        local_node = URIRef(ted_uri)
-        if fountain is None:
-            fountain = self.repository.fountain
-        known_types = fountain.types
-        ns = self.repository.ns(fountain=fountain)
-        ted = TED()
-        g = ted.to_graph(node=local_node, abstract=True, fetch=False)
-        for root_uri, td_uri in self.VTED.roots:
-            root_uri = URIRef(root_uri)
-            types = get_th_types(self.repository, root_uri, infer=True)
-            valid_types = filter(lambda t: t.n3(ns) in known_types, types)
-            if valid_types:
-                r = Resource(root_uri, types=valid_types)
-                if td_uri is None:
-                    g.__iadd__(r.to_graph(abstract=True, fetch=False))
-                g.add((ted.ecosystem.node, CORE.hasComponent, root_uri))
+    @property
+    def data_cache(self):
+        return self.__cache
 
-        for prefix, ns in fountain.prefixes.items():
-            g.bind(prefix, ns)
+    @property
+    def agora(self):
+        return self.__eco.agora
 
-        ted = TED.from_graph(g, fetch=not lazy, loader=None if lazy else self.repository.pull)
-        return ted
+    @data_cache.setter
+    def data_cache(self, c):
+        self.__cache = c
 
-    def __new__(cls, **kwargs):
-        host = kwargs.get('host', None)
-        if host:
-            client_args = {'host': host}
-            port = kwargs.get('port', None)
-            if port:
-                client_args['port'] = port
-            gw = GatewayClient(**client_args)
-            return gw
+    def __data_proxy(self, item):
+        def wrapper(*args, **kwargs):
+            if item == 'query' or item == 'fragment':
+                query = args[0]
+                ted = self.__eco.discover(query, strict=False, lazy=False)
+                if 'cache' in kwargs:
+                    self.__cache = kwargs['cache']
+                    del kwargs['cache']
+                dgw = DataGateway(self.__eco.agora, ted, cache=self.__cache, static_fountain=True)
+                return dgw.__getattribute__(item)(*args, **kwargs)
 
-        gw = super(Gateway, cls).__new__(cls)
-        gw.__init__()
+        return wrapper
 
-        repository_kwargs = kwargs.get('repository', {})
-        gw.repository = Repository(**repository_kwargs)
-        engine_kwargs = kwargs.get('engine', {})
-        agora = Agora(**engine_kwargs)
-        gw.repository.agora = agora
-        gw.VTED = VTED(gw.repository)
+    def data(self, query, strict=False, lazy=False, **kwargs):
+        ted = self.__eco.discover(query, strict=strict, lazy=lazy)
+        if 'cache' in kwargs:
+            self.__cache = kwargs['cache']
+            del kwargs['cache']
+        dgw = DataGateway(self.agora, ted, cache=self.__cache, **kwargs)
+        return dgw
 
-        return gw
+    def seeds(self, query, host='agora', port=80, **kwargs):
+        try:
+            return discover_seeds(self.__eco, query, host, port, **kwargs)
+        except GatewayError as e:
+            raise e
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def add_resource(self, uri, types):
+        prefixes = self.agora.fountain.prefixes
+        try:
+            types = map(lambda t: extend_uri(t, prefixes), types)
+            return self.__eco.add_resource(uri, types)
+        except TypeError as e:
+            raise NotFoundError(e.message)
+        except AttributeError as e:
+            raise ConflictError(e.message)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def add_description(self, id, types):
+        prefixes = self.agora.fountain.prefixes
+        try:
+            types = map(lambda t: extend_uri(t, prefixes), types)
+            return self.__eco.add_description(id, types)
+        except TypeError as e:
+            raise NotFoundError(e.message)
+        except AttributeError as e:
+            raise ConflictError(e.message)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def update_description(self, td):
+        try:
+            ted = self.__eco.add_descriptions(td.to_graph())
+            return filter(lambda t: t.id == td.id, ted.ecosystem.tds).pop()
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def learn_descriptions(self, g):
+        try:
+            return self.__eco.learn_descriptions(g)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def get_extension(self, eid):
+        if eid in self.__eco.extensions:
+            try:
+                return self.__eco.get_extension(eid)
+            except GatewayError as e:
+                raise e
+            except Exception as e:
+                raise GatewayError(e.message)
+
+        raise NotFoundError('{}?'.format(eid))
+
+    @property
+    def extensions(self):
+        return self.__eco.extensions
+
+    def get_type(self, ty):
+        try:
+            return self.__eco.agora.fountain.get_type(ty)
+        except TypeError:
+            raise NotFoundError(ty)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def get_property(self, pr):
+        try:
+            return self.__eco.agora.fountain.get_property(pr)
+        except TypeError:
+            raise NotFoundError(pr)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def paths(self, source, dest):
+        types = self.__eco.agora.fountain.types
+        if dest not in types:
+            raise NotFoundError('{}'.format(dest))
+        if source not in types:
+            raise NotFoundError('{}'.format(source))
+        try:
+            return self.__eco.agora.fountain.get_paths(dest, force_seed=[
+                ('<{}-uri>'.format(source.lower()).replace(':', '-'), source)])
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def get_description(self, id):
+        try:
+            return self.__eco.get_description(id)
+        except AttributeError:
+            raise NotFoundError(id)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    @property
+    def resources(self):
+        return self.__eco.resources
+
+    def get_resource(self, uri):
+        try:
+            return self.__eco.get_resource(uri)
+        except AttributeError:
+            raise NotFoundError(id)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def delete_description(self, id):
+        try:
+            td = self.__eco.get_description(id)
+        except AttributeError:
+            td = None
+        if td is None:
+            raise NotFoundError('Unknown description: {}'.format(id))
+
+        try:
+            self.__eco.delete_description(id)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def get_thing(self, id):
+        try:
+            return self.__eco.get_thing(id)
+        except AttributeError:
+            raise NotFoundError(id)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def delete_resource(self, uri):
+        try:
+            self.__eco.delete_resource(uri)
+        except AttributeError:
+            raise NotFoundError(uri)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    @property
+    def args(self):
+        try:
+            ted = self.__eco.ted
+
+            td_roots = list(filter(lambda r: isinstance(r, TD), ted.ecosystem.roots))
+            res = {}
+            for td in td_roots:
+                td_root_vars = ted.ecosystem.root_vars(td)
+                if td_root_vars:
+                    res[td.id] = list(td_root_vars)
+            return res
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def learn_extension(self, name, g, replace=True):
+        if not replace and name in self.__eco.extensions:
+            raise ConflictError(name)
+
+        try:
+            self.__eco.add_extension(name, g)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def forget_extension(self, name):
+        if name not in self.__eco.extensions:
+            raise NotFoundError(name)
+
+        try:
+            self.__eco.delete_extension(name)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def discover(self, query, strict=False, **kwargs):
+        try:
+            return self.__eco.discover(query, strict, **kwargs)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def add_access_mapping(self, td_id, link):
+        try:
+            return add_access_mapping(self.__eco, td_id, link)
+        except GatewayError:
+            raise
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def add_mapping(self, id, amid, predicate, key, jsonpath=None, root=False, transformed_by=None):
+        try:
+            return add_mapping(self.__eco, id, amid, predicate, key, jsonpath=jsonpath, root=root, transformed_by=transformed_by)
+        except GatewayError:
+            raise
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    @property
+    def descriptions(self):
+        return self.__eco.descriptions
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        Agora.close()

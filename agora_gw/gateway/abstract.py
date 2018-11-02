@@ -26,10 +26,10 @@ from rdflib import Graph
 __author__ = 'Fernando Serena'
 
 
-class AbstractGateway(object):
+class AbstractEcoGateway(object):
     @abstractmethod
     def add_extension(self, eid, g):
-        # type: (Graph) -> iter
+        # type: (str, Graph) -> iter
         raise NotImplementedError
 
     @abstractmethod
@@ -59,12 +59,27 @@ class AbstractGateway(object):
 
     @property
     @abstractmethod
+    def descriptions(self):
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
     def ted(self):
         raise NotImplementedError
 
+    @property
     @abstractmethod
-    def add_description(self, g):
+    def resources(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def learn_descriptions(self, g):
         # type: (Graph) -> TED
+        raise NotImplementedError
+
+    @abstractmethod
+    def add_description(self, id, types):
+        # type: (basestring, iter) -> TD
         raise NotImplementedError
 
     @abstractmethod
@@ -79,6 +94,18 @@ class AbstractGateway(object):
 
     @abstractmethod
     def delete_description(self, tdid):
+        raise NotImplementedError
+
+    @abstractmethod
+    def add_resource(self, uri, types):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_resource(self, uri):
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_resource(self, uri):
         raise NotImplementedError
 
     @abstractmethod

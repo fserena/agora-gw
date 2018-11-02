@@ -20,9 +20,10 @@ import traceback
 
 from agora.engine.fountain.onto import DuplicateVocabulary
 from agora.server import HTML
+from agora_wot.blocks.utils import bound_graph
 from flask import Flask, request, jsonify, make_response, url_for
 from flask_negotiate import produces, consumes
-from rdflib import URIRef, RDF
+from rdflib import URIRef, RDF, Graph
 
 from agora_gw.data.repository import CORE
 from agora_gw.ecosystem.serialize import serialize_TED, JSONLD, TURTLE, serialize_graph, deserialize
@@ -32,6 +33,13 @@ __author__ = 'Fernando Serena'
 
 DISCOVERY_MIMES = [JSONLD, TURTLE]
 DESCRIPTION_MIMES = [JSONLD, TURTLE]
+
+
+def prefixed_graph(gw):
+    g = bound_graph()
+    for prefix, uri in gw.agora.fountain.prefixes.items():
+        g.bind(prefix, uri)
+    return g
 
 
 def request_wants_turtle():
@@ -122,14 +130,14 @@ def discover(gw):
     return _discover
 
 
-def add_descriptions(gw):
+def learn_descriptions(gw):
     @consumes(*DESCRIPTION_MIMES)
     @produces(*DISCOVERY_MIMES)
-    def _add_descriptions():
+    def _learn_descriptions():
         descriptions = request.data
         try:
             g = deserialize(descriptions, format=request.content_type)
-            ted = gw.add_description(g, ted_path=url_for('_get_ted'))
+            ted = gw.learn_descriptions(g, ted_path=url_for('_get_ted'))
             format = TURTLE if request_wants_turtle() else JSONLD
             ted_str = serialize_TED(ted, format, prefixes=gw.repository.fountain.prefixes)
 
@@ -145,14 +153,14 @@ def add_descriptions(gw):
         response.status_code = 400
         return response
 
-    return _add_descriptions
+    return _learn_descriptions
 
 
 def get_td(gw):
     def _get_td(id):
         try:
             td = gw.get_description(id, fetch=False)
-            g = td.to_graph()
+            g = td.to_graph(graph=prefixed_graph(gw))
             format = TURTLE if request_wants_turtle() else JSONLD
             ttl = serialize_graph(g, format, frame=CORE.ThingDescription)
 
@@ -178,7 +186,7 @@ def delete_td(gw):
             gw.delete_description(id)
             response = make_response()
             return response
-        except IndexError:
+        except (IndexError, AttributeError):
             pass
 
         response = make_response()
@@ -222,8 +230,9 @@ def get_ted(gw):
 def get_thing(gw):
     def _get_thing(id):
         try:
-            g = gw.get_thing(id, lazy=True).to_graph()
-            th_node = g.identifier
+            r = gw.get_thing(id, lazy=True)
+            g = r.to_graph(graph=prefixed_graph(gw))
+            th_node = r.node
             th_types = list(g.objects(URIRef(th_node), RDF.type))
             th_type = th_types.pop() if th_types else None
 
@@ -247,16 +256,101 @@ def get_thing(gw):
     return _get_thing
 
 
+def get_resources(gw):
+    def _get_resources():
+        all_resources = gw.resources
+        g = Graph()
+        for r in all_resources:
+            g.__iadd__(r.to_graph(graph=prefixed_graph(gw)))
+
+        own_base = unicode(request.url_root)
+        format = TURTLE if request_wants_turtle() else JSONLD
+        ttl = serialize_graph(g, format)
+        ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
+        response = make_response(ttl)
+        response.headers['Content-Type'] = format
+        return response
+
+    return _get_resources
+
+
+def get_descriptions(gw):
+    def _get_descriptions():
+        all_descriptions = gw.descriptions
+        g = Graph()
+        for td in all_descriptions:
+            g.add((td.node, RDF.type, CORE.ThingDescription))
+            g.add((td.node, CORE.describes, td.resource.node))
+
+        own_base = unicode(request.url_root)
+        format = TURTLE if request_wants_turtle() else JSONLD
+        ttl = serialize_graph(g, format)
+        ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
+        response = make_response(ttl)
+        response.headers['Content-Type'] = format
+        return response
+
+    return _get_descriptions
+
+
+def get_resource(gw):
+    def _get_resource(uri):
+        try:
+            g = gw.get_resource(uri).to_graph(graph=prefixed_graph(gw))
+            r_types = list(g.objects(URIRef(uri), RDF.type))
+            r_type = r_types.pop() if r_types else None
+
+            format = TURTLE if request_wants_turtle() else JSONLD
+            ttl = serialize_graph(g, format, frame=r_type)
+
+            own_base = unicode(request.url_root)
+            ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
+            response = make_response(ttl)
+            response.headers['Content-Type'] = format
+            return response
+        except (IndexError, AttributeError):
+            traceback.print_exc()
+            pass
+
+        response = make_response()
+        response.status_code = 404
+
+        return response
+
+    return _get_resource
+
+
+def delete_resource(gw):
+    def _delete_resource(uri):
+        try:
+            gw.delete_resource(uri)
+            response = make_response()
+            return response
+        except (IndexError, AttributeError):
+            pass
+
+        response = make_response()
+        response.status_code = 404
+
+        return response
+
+    return _delete_resource
+
+
 def build(name, gw=None, **kwargs):
     if gw is None:
         gw = Gateway(**kwargs)
     app = Flask(name)
+    app.route('/resources')(get_resources(gw))
+    app.route('/resources/<path:uri>')(get_resource(gw))
+    app.route('/resources/<path:uri>', methods=['DELETE'])(delete_resource(gw))
     app.route('/things/<id>')(get_thing(gw))
     app.route('/descriptions/<id>')(get_td(gw))
     app.route('/descriptions/<id>', methods=['DELETE'])(delete_td(gw))
     app.route('/ted')(get_ted(gw))
     app.route('/discover', methods=['POST'])(discover(gw))
-    app.route('/descriptions', methods=['POST'])(add_descriptions(gw))
+    app.route('/descriptions')(get_descriptions(gw))
+    app.route('/descriptions', methods=['POST'])(learn_descriptions(gw))
     app.route('/extensions')(get_extensions(gw))
     app.route('/extensions/<id>')(get_extension(gw))
     app.route('/extensions/<id>', methods=['PUT'])(learn_with_id(gw))

@@ -16,11 +16,16 @@
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
 
-import logging
-import os
-
-from agora_gw.gateway import Gateway
-
 __author__ = 'Fernando Serena'
 
-LOG_LEVEL = int(os.environ.get('LOG_LEVEL', logging.INFO))
+
+class GatewayError(Exception):
+    pass
+
+
+class NotFoundError(GatewayError):
+    pass
+
+
+class ConflictError(GatewayError):
+    pass
