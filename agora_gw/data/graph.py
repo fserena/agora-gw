@@ -20,12 +20,11 @@ import os
 from StringIO import StringIO
 from urlparse import urlparse
 
-from rdflib import Graph, URIRef, RDF, BNode, ConjunctiveGraph
-
 from agora_gw.data.sparql import SPARQL
+from rdflib import Graph, URIRef, RDF, BNode, ConjunctiveGraph
+from rdflib.plugins.parsers.notation3 import BadSyntax
 
 __author__ = 'Fernando Serena'
-
 
 BNODE_SKOLEM_BASE = os.environ.get('BNODE_SKOLEM_BASE', 'http://bnodes').rstrip('/')
 
@@ -50,7 +49,10 @@ def _get_graph(gid, sparql, de_skolemize=True, **kwargs):
             """ % gid, **kwargs)
 
         g = Graph(identifier=URIRef(gid))
-        g.parse(StringIO(g_n3), format='n3')
+        try:
+            g.parse(StringIO(g_n3), format='n3')
+        except BadSyntax as e:
+            log.warn(e.message)
 
     if g:
         res = sparql.query("""
