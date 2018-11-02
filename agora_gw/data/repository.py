@@ -34,7 +34,7 @@ from agora_gw.data.sparql import SPARQL
 __author__ = 'Fernando Serena'
 
 SCHEMA_GRAPH = os.environ.get('SCHEMA_GRAPH', 'http://agora.org/schema')
-EXTENSION_BASE = os.environ.get('EXTENSION_BASE', 'http://agora.org/extensions/')
+EXTENSION_BASE = os.environ.get('EXTENSION_BASE', 'http://agora.org/extensions/').strip()
 
 WOT = Namespace('http://iot.linkeddata.es/def/wot#')
 CORE = Namespace('http://iot.linkeddata.es/def/core#')
@@ -50,7 +50,7 @@ REPOSITORY_BASE = unicode(os.environ.get('REPOSITORY_BASE', 'http://agora.org/da
 
 
 def _learn_thing_describing_predicates(id, sparql):
-    # type: (str, SPARQL, dict) -> set
+    # type: (str, SPARQL) -> set
 
     res = sparql.query("""
     PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -73,7 +73,7 @@ def _learn_thing_describing_predicates(id, sparql):
 
 
 def _learn_describing_predicates(sparql):
-    # type: (SPARQL, dict) -> set
+    # type: (SPARQL) -> set
 
     res = sparql.query("""
     PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -136,7 +136,7 @@ class Repository(object):
 
     @ext_base.setter
     def ext_base(self, eb):
-        self.__ext_base = eb
+        self.__ext_base = eb.strip()
 
     @property
     def sparql(self):
@@ -349,10 +349,6 @@ class Repository(object):
         r.base = r_base
         ext_base = kwargs.get('extension_base', None)
         r.ext_base = ext_base
-        # if r_base is not None:
-        #     del kwargs['repository_base']
-        # if ext_base is not None:
-        #     del kwargs['extension_base']
         r._sparql = SPARQL(**kwargs.get('data', {}))
 
         return r
