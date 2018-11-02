@@ -151,15 +151,15 @@ def is_semantically_reachable(fountain, source_types, target, cache=None):
 
 def is_described_reachable(fountain, R, td_network, seed, type):
     res = R.query("""
-    PREFIX core: <http://iot.linkeddata.es/def/core#>
-    SELECT DISTINCT ?g ?id WHERE {
-        GRAPH ?g {
-           [] a core:ThingDescription ;
-              core:identifier ?id ;
-              core:describes <%s>
+        PREFIX core: <http://iot.linkeddata.es/def/core#>
+        SELECT DISTINCT ?g ?id WHERE {
+            GRAPH ?g {
+               [] a core:ThingDescription ;
+                  core:identifier ?id ;
+                  core:describes <%s>
+            }
         }
-    }
-    """ % seed, cache=True, expire=300, infer=True)
+        """ % seed, cache=True, expire=300, infer=True)
     rd = generate_dict(R.n3, R.ns(fountain=fountain), res)
     try:
         td_id = rd.keys().pop()
@@ -167,17 +167,18 @@ def is_described_reachable(fountain, R, td_network, seed, type):
         return True  # what if the seed does not correspond to a described (TD-based) thing?
 
     type_uri = extend_uri(type, fountain.prefixes)
+
     res = R.query("""
     PREFIX core: <http://iot.linkeddata.es/def/core#>
-    SELECT DISTINCT ?id WHERE {    
-        [] a core:ThingDescription ;
-           core:identifier ?id ;
-           core:describes [
-            a <%s>
-        ]                
+        SELECT DISTINCT ?id WHERE { 
+        [] a core:ThingDescription ; core:describes ?th ; core:identifier ?id
+        {
+            GRAPH ?th { ?s a <%s> }
+        }
     }
     """ % type_uri, cache=True, expire=300, infer=True)
     target_tds = map(lambda x: x['id']['value'], res)
+
     for target in target_tds:
         try:
             if nx.shortest_path(td_network, td_id, target):
