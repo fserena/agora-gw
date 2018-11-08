@@ -22,14 +22,14 @@ import logging
 from StringIO import StringIO
 
 from agora_wot.blocks.td import TD
-from agora_wot.gateway.proxy import path_data, ld_triples
+from agora_wot.gateway.lifting import ld_triples
+from agora_wot.gateway.path import path_data
 from agora_wot.gateway.publish import build_graph_context
 from agora_wot.ns import MAP, CORE, WOT
 from pyld import jsonld
 from rdflib import XSD, Graph, ConjunctiveGraph
 from rdflib.plugins.parsers.notation3 import BadSyntax
 
-# from agora_gw.data.repository import GEO
 from agora_gw.data.graph import skolemize, deskolemize
 from agora_gw.misc.utils import merge_two_dicts
 
@@ -43,8 +43,6 @@ TURTLE = 'text/turtle'
 CTX_NAMESPACES = {
     CORE: '@vocab',
     WOT: 'wot',
-    # MAP: 'map',
-    # GEO: 'geo'
 }
 
 CTX_MAPPINGS = {

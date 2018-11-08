@@ -22,6 +22,7 @@ from agora_wot.blocks.td import TD
 from agora_wot.gateway import DataGateway
 
 from agora_gw.gateway.add import add_access_mapping, add_mapping
+from agora_gw.gateway.delete import delete_access_mapping, delete_mapping
 from agora_gw.gateway.discover import discover_seeds
 from agora_gw.gateway.eco import EcoGateway, AbstractEcoGateway
 from agora_gw.gateway.errors import GatewayError, NotFoundError, ConflictError
@@ -77,12 +78,12 @@ class Gateway(object):
 
         return wrapper
 
-    def data(self, query, strict=False, lazy=False, **kwargs):
+    def data(self, query, strict=False, lazy=False, host='agora', port=80, **kwargs):
         ted = self.__eco.discover(query, strict=strict, lazy=lazy)
         if 'cache' in kwargs:
             self.__cache = kwargs['cache']
             del kwargs['cache']
-        dgw = DataGateway(self.agora, ted, cache=self.__cache, **kwargs)
+        dgw = DataGateway(self.agora, ted, cache=self.__cache, server_name=host, port=port, **kwargs)
         return dgw
 
     def seeds(self, query, host='agora', port=80, **kwargs):
@@ -94,9 +95,7 @@ class Gateway(object):
             raise GatewayError(e.message)
 
     def add_resource(self, uri, types):
-        prefixes = self.agora.fountain.prefixes
         try:
-            types = map(lambda t: extend_uri(t, prefixes), types)
             return self.__eco.add_resource(uri, types)
         except TypeError as e:
             raise NotFoundError(e.message)
@@ -106,9 +105,7 @@ class Gateway(object):
             raise GatewayError(e.message)
 
     def add_description(self, id, types):
-        prefixes = self.agora.fountain.prefixes
         try:
-            types = map(lambda t: extend_uri(t, prefixes), types)
             return self.__eco.add_description(id, types)
         except TypeError as e:
             raise NotFoundError(e.message)
@@ -144,6 +141,14 @@ class Gateway(object):
     @property
     def extensions(self):
         return self.__eco.extensions
+
+    @property
+    def types(self):
+        return self.agora.fountain.types
+
+    @property
+    def properties(self):
+        return self.agora.fountain.properties
 
     def get_type(self, ty):
         try:
@@ -269,9 +274,26 @@ class Gateway(object):
         except Exception as e:
             raise GatewayError(e.message)
 
+    def delete_access_mapping(self, id, amid):
+        try:
+            delete_access_mapping(self.__eco, id, amid)
+        except GatewayError:
+            raise
+        except Exception as e:
+            raise GatewayError(e.message)
+
     def add_mapping(self, id, amid, predicate, key, jsonpath=None, root=False, transformed_by=None):
         try:
-            return add_mapping(self.__eco, id, amid, predicate, key, jsonpath=jsonpath, root=root, transformed_by=transformed_by)
+            return add_mapping(self.__eco, id, amid, predicate, key, jsonpath=jsonpath, root=root,
+                               transformed_by=transformed_by)
+        except GatewayError:
+            raise
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def delete_mapping(self, id, mid):
+        try:
+            return delete_mapping(self.__eco, id, mid)
         except GatewayError:
             raise
         except Exception as e:

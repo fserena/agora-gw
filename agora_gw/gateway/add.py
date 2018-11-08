@@ -46,8 +46,9 @@ def add_access_mapping(eco_gw, td_id, link):
 
 
 def add_mapping(eco_gw, id, amid, predicate, key, jsonpath=None, root=False, transformed_by=None):
-    td = eco_gw.get_description(id)
-    if not td:
+    try:
+        td = eco_gw.get_description(id)
+    except AttributeError:
         raise NotFoundError(id)
 
     transform_td = None

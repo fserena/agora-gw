@@ -20,7 +20,7 @@ import traceback
 
 from agora.engine.fountain.onto import DuplicateVocabulary
 from agora.server import HTML
-from agora_wot.blocks.utils import bound_graph
+from agora_wot.utils import bound_graph
 from flask import Flask, request, jsonify, make_response, url_for
 from flask_negotiate import produces, consumes
 from rdflib import URIRef, RDF, Graph

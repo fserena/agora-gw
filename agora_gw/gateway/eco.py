@@ -43,25 +43,31 @@ class EcoGateway(AbstractEcoGateway):
 
     @property
     def agora(self):
+        # type: () -> Agora
         return self.repository.agora
 
     @property
     def repository(self):
+        # type: () -> Repository
         return self.__repository
 
     @repository.setter
     def repository(self, r):
+        # type: (Repository) -> None
         self.__repository = r
 
     @property
     def VTED(self):
+        # type: () -> VTED
         return self.__VTED
 
     @VTED.setter
     def VTED(self, vted):
+        # type: (VTED) -> None
         self.__VTED = vted
 
     def add_extension(self, eid, g):
+        # type: (basestring, Graph) -> None
         if g:
             self.__repository.learn(g, ext_id=eid)
             self.__VTED.sync(force=True)
@@ -69,6 +75,7 @@ class EcoGateway(AbstractEcoGateway):
             raise AttributeError('no vocabulary provided')
 
     def update_extension(self, eid, g):
+        # type: (basestring, Graph) -> None
         if g:
             self.__repository.learn(g, ext_id=eid)
             self.__VTED.sync(force=True)
@@ -76,14 +83,17 @@ class EcoGateway(AbstractEcoGateway):
             raise AttributeError('no vocabulary provided')
 
     def delete_extension(self, eid):
+        # type: (basestring) -> None
         self.__repository.delete_extension(eid)
 
     def get_extension(self, eid):
-        ttl = self.__repository.get_extension(eid)
-        return ttl
+        # type: (basestring) -> Graph
+        ext_g = self.__repository.get_extension(eid)
+        return ext_g
 
     @property
     def extensions(self):
+        # type: () -> iter
         return self.__repository.extensions
 
     def _get_thing_graph(self, td):
@@ -103,6 +113,7 @@ class EcoGateway(AbstractEcoGateway):
         return def_g
 
     def learn_descriptions(self, g, ted_path='/ted'):
+        # type: (Graph, basestring) -> TED
         if not g:
             raise AttributeError('no description/s provided')
 
@@ -116,6 +127,7 @@ class EcoGateway(AbstractEcoGateway):
         return ted
 
     def delete_description(self, tdid, ted_path='/ted'):
+        # type: (basestring, basestring) -> None
         td_node = get_td_node(self.__repository, tdid)
         if td_node:
             try:
@@ -132,6 +144,7 @@ class EcoGateway(AbstractEcoGateway):
             self.__VTED.update(TED(), None, eco_node)
 
     def add_resource(self, uri, types):
+        # type: (basestring, iter) -> TED
         ted = self.ted
         matching_resources = filter(lambda r: r.node.toPython() == uri, self.ted.ecosystem.non_td_root_resources)
         if not matching_resources:
@@ -155,13 +168,14 @@ class EcoGateway(AbstractEcoGateway):
             for t in types:
                 g.add((uri_ref, RDF.type, URIRef(extend_uri(t, prefixes))))
 
-            ted = self.add_descriptions(g)
+            ted = self.learn_descriptions(g)
             return ted
         else:
             raise AttributeError(uri)
 
     @property
     def descriptions(self):
+        # type: () -> iter
         return self.ted.ecosystem.tds
 
     def add_description(self, id, types):
@@ -178,14 +192,15 @@ class EcoGateway(AbstractEcoGateway):
         try:
             self.get_description(id)
         except AttributeError:
-            ted = self.add_descriptions(g)
+            ted = self.learn_descriptions(g)
             tds = ted.ecosystem.tds
             if len(tds):
-                return tds.pop()
+                return list(tds).pop()
         else:
             raise AttributeError(id)
 
     def delete_resource(self, uri):
+        # type: (basestring) -> None
         matching_resources = filter(lambda r: r.node.toPython() == uri, self.ted.ecosystem.non_td_root_resources)
         if matching_resources:
             self.repository.delete(uri)
@@ -193,6 +208,7 @@ class EcoGateway(AbstractEcoGateway):
             raise AttributeError(uri)
 
     def get_resource(self, uri):
+        # type: (basestring) -> Resource
         matching_resources = filter(lambda r: r.node.toPython() == uri, self.ted.ecosystem.non_td_root_resources)
         if matching_resources:
             return matching_resources.pop()
@@ -201,6 +217,7 @@ class EcoGateway(AbstractEcoGateway):
 
     @property
     def resources(self):
+        # type: () -> frozenset[Resource]
         return self.ted.ecosystem.non_td_root_resources
 
     def __loader(self):
@@ -215,6 +232,7 @@ class EcoGateway(AbstractEcoGateway):
         return wrapper
 
     def get_description(self, tdid, fetch=False):
+        # type: (basestring, bool) -> TD
         td_node = get_td_node(self.__repository, tdid)
         g = self.__repository.pull(td_node, cache=True, infer=False, expire=300)
         for ns, uri in self.__repository.fountain.prefixes.items():

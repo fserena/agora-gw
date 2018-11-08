@@ -25,16 +25,14 @@ from multiprocessing import Lock
 
 import networkx as nx
 from agora.engine.plan.agp import extend_uri
-
-from agora_gw.data.graph import canonize_node
-from agora_gw.data.repository import CORE
 from agora_wot.blocks.eco import request_loader, Ecosystem
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
 from rdflib import BNode, URIRef, Graph, RDF, RDFS
-from redis_cache import cache_it, SimpleCache
-import traceback
+
+from agora_gw.data.graph import canonize_node
+from agora_gw.data.repository import CORE
 
 __author__ = 'Fernando Serena'
 
@@ -465,27 +463,29 @@ class VTED(object):
             ted_uri, eco = self.ted_eco()
         except EnvironmentError:
             self.R.push(ted.to_graph(node=eco_uri, abstract=True))
-        else:
+            ted_uri, eco = self.ted_eco()
+        finally:
             self.sync(force=True)
-            network_roots = set(map(lambda (n, _): URIRef(get_th_node(self.R, n)),
-                                    filter(lambda (n, degree): degree == 0, dict(self.network.in_degree()).items())))
-            obsolete_td_based_roots = set.difference(last_td_based_roots, network_roots)
-            ted_components = ted.ecosystem.roots
-            for root in ted_components:
-                if isinstance(root, TD):
-                    resource = root.resource
-                    if resource.node in network_roots and resource.node not in last_td_based_roots:
-                        self.add_component(ted_uri, eco, resource.node)
-                else:
-                    self.R.push(root.to_graph())
-                    self.add_component(ted_uri, eco, root.node)
 
-            promoted_td_based_root_uris = set.difference(network_roots, last_td_based_roots)
-            for root in promoted_td_based_root_uris:
-                self.add_component(ted_uri, eco, root)
+        network_roots = set(map(lambda (n, _): URIRef(get_th_node(self.R, n)),
+                                filter(lambda (n, degree): degree == 0, dict(self.network.in_degree()).items())))
+        obsolete_td_based_roots = set.difference(last_td_based_roots, network_roots)
+        ted_components = ted.ecosystem.roots
+        for root in ted_components:
+            if isinstance(root, TD):
+                resource = root.resource
+                if resource.node in network_roots and resource.node not in last_td_based_roots:
+                    self.add_component(ted_uri, eco, resource.node)
+            else:
+                self.R.push(root.to_graph())
+                self.add_component(ted_uri, eco, root.node)
 
-            for root in obsolete_td_based_roots:
-                self.remove_component(ted_uri, root)
+        promoted_td_based_root_uris = set.difference(network_roots, last_td_based_roots)
+        for root in promoted_td_based_root_uris:
+            self.add_component(ted_uri, eco, root)
+
+        for root in obsolete_td_based_roots:
+            self.remove_component(ted_uri, root)
 
         self.sync(force=True)
         self.R.expire_cache()

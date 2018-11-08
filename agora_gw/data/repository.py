@@ -136,7 +136,7 @@ class Repository(object):
 
     @ext_base.setter
     def ext_base(self, eb):
-        self.__ext_base = eb.strip()
+        self.__ext_base = eb.strip() if isinstance(eb, basestring) else eb
 
     @property
     def sparql(self):
@@ -223,12 +223,15 @@ class Repository(object):
         return _learn_thing_describing_predicates(id, self.sparql)
 
     def query(self, q, **kwargs):
+        # type: (basestring, iter) -> object
         return self.sparql.query(u'{}'.format(q), **kwargs)
 
     def update(self, q):
-        return self.sparql.update(u'{}'.format(q))
+        # type: (basestring) -> None
+        self.sparql.update(u'{}'.format(q))
 
     def pull(self, uri, **kwargs):
+        # type: (basestring, iter) -> Graph
         if not uri:
             raise AttributeError(u'Cannot pull {} from repository'.format(uri))
         g = pull(self.sparql, u'{}'.format(uri), **kwargs)
@@ -237,19 +240,24 @@ class Repository(object):
         return g
 
     def push(self, g):
+        # type: (Graph) -> None
         push_g(self.sparql, g)
 
     def insert(self, g):
+        # type: (Graph) -> None
         push_g(self.sparql, g, delete=False)
 
     def delete(self, gid):
+        # type: (basestring) -> None
         delete_g(self.sparql, gid)
 
     @property
     def extensions(self):
+        # type: () -> iter
         return self.agora.fountain.vocabularies
 
     def learn(self, g, ext_ns=None, ext_id=None, push=True):
+        # type: (Graph, basestring, basestring, bool) -> basestring
         if ext_id is None:
             ext_id = 'ext_' + uuid()
 
@@ -282,6 +290,7 @@ class Repository(object):
         return ext_id
 
     def get_extension(self, id):
+        # type: (basestring) -> Graph
         def match_ns(term):
             filter_ns = [ns for ns in rev_ns if ns in term]
             if filter_ns:
@@ -305,6 +314,7 @@ class Repository(object):
         return res_g
 
     def delete_extension(self, id):
+        # type: (basestring) -> None
         prefixes = self.agora.fountain.prefixes
         ext_ns = prefixes.get(id, EXT[id])
         self.agora.fountain.delete_vocabulary(id)
