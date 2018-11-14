@@ -26,14 +26,12 @@ from urllib import urlencode
 import requests
 from SPARQLWrapper import SPARQLWrapper, JSON, N3
 from agora import get_kv
+from agora.engine.utils.graph import get_triple_store
 from rdflib import ConjunctiveGraph, URIRef
-from redis_cache import cache_it, DEFAULT_EXPIRY, SimpleCache as BaseSimpleCache, RedisNoConnException, \
+from redis_cache import cache_it, SimpleCache as BaseSimpleCache, RedisNoConnException, \
     RedisConnect as BaseRedisConnect, redis
 
-from agora.engine.utils.graph import get_triple_store
-
 __author__ = 'Fernando Serena'
-
 
 SPARQL_HOST = os.environ.get('SPARQL_HOST')
 UPDATE_HOST = os.environ.get('UPDATE_HOST')
@@ -42,7 +40,6 @@ QUERY_CACHE_HOST = os.environ.get('QUERY_CACHE_HOST', 'localhost')
 QUERY_CACHE_PORT = int(os.environ.get('QUERY_CACHE_PORT', 6379))
 QUERY_CACHE_NUMBER = int(os.environ.get('QUERY_CACHE_NUMBER', 8))
 QUERY_CACHE_EXPIRE = int(os.environ.get('QUERY_CACHE_EXPIRE', 3600))
-
 
 log = logging.getLogger('agora.gateway.data.sparql')
 
@@ -77,6 +74,8 @@ def _update(q, update_host=UPDATE_HOST):
             delete_graph = graph
 
         delete_graph.update(update_str)
+        if not len(delete_graph):
+            graph.remove_context(delete_graph)
 
     query_fn = local if isinstance(update_host, ConjunctiveGraph) else remote
     return query_fn()
