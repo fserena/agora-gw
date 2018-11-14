@@ -16,14 +16,13 @@
 #-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=#
 """
 
-from agora import RedisCache, Agora
-from agora.engine.plan.agp import extend_uri
+from agora import RedisCache
+from agora.engine.utils import Semaphore
 from agora_wot.blocks.td import TD
 from agora_wot.gateway import DataGateway
 
 from agora_gw.gateway.add import add_access_mapping, add_mapping
 from agora_gw.gateway.delete import delete_access_mapping, delete_mapping
-from agora_gw.gateway.discover import discover_seeds
 from agora_gw.gateway.eco import EcoGateway, AbstractEcoGateway
 from agora_gw.gateway.errors import GatewayError, NotFoundError, ConflictError
 
@@ -37,6 +36,7 @@ class Gateway(object):
             self.__cache = RedisCache(**kwargs['data_cache'])
         else:
             self.__cache = None
+        self.__stop = Semaphore()
 
     @property
     def eco(self):
@@ -84,11 +84,13 @@ class Gateway(object):
             self.__cache = kwargs['cache']
             del kwargs['cache']
         dgw = DataGateway(self.agora, ted, cache=self.__cache, server_name=host, port=port, **kwargs)
+        dgw.__stop = self.__stop
         return dgw
 
-    def seeds(self, query, host='agora', port=80, **kwargs):
+    def seeds(self, query):
         try:
-            return discover_seeds(self.__eco, query, host, port, **kwargs)
+            ted = self.__eco.discover(query, lazy=False)
+            return ted.typed_seeds
         except GatewayError as e:
             raise e
         except Exception as e:
@@ -304,7 +306,15 @@ class Gateway(object):
         return self.__eco.descriptions
 
     def __enter__(self):
-        pass
+        self.__stop.__enter__()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        Agora.close()
+        self.__close_eco()
+        self.__stop.__exit__(exc_type, exc_val, exc_tb)
+
+    def __close_eco(self):
+        if hasattr(self.__eco, 'close'):
+            self.__eco.close()
+
+    def close(self):
+        self.__close_eco()

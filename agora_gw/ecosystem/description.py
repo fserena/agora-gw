@@ -82,7 +82,6 @@ def get_td_node(R, id):
     try:
         return URIRef(res.pop()['td']['value'])
     except IndexError:
-        log.warn('No TD for identifier {}'.format(id))
         raise AttributeError(id)
 
 
@@ -99,7 +98,6 @@ def get_th_node(R, id):
     try:
         return URIRef(res.pop()['th']['value'])
     except IndexError:
-        log.warn('No thing for TD identifier {}'.format(id))
         raise AttributeError(id)
 
 

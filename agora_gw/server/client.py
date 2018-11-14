@@ -19,16 +19,17 @@
 from StringIO import StringIO
 
 from agora import Agora
+from agora.engine.plan.agp import extend_uri
 from agora.server import Client
 from agora_wot.blocks.eco import request_loader
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
+from rdflib import Graph, RDF, URIRef
 
 from agora_gw.data.graph import deskolemize
 from agora_gw.data.repository import CORE
 from agora_gw.gateway.abstract import AbstractEcoGateway
-from rdflib import Graph, RDF, URIRef
 
 __author__ = 'Fernando Serena'
 
@@ -98,9 +99,18 @@ class EcoGatewayClient(Client, AbstractEcoGateway):
             raise AttributeError(e.message['text'])
 
     def add_description(self, id, types):
+        try:
+            self._get_request('descriptions/{}'.format(id), accept='text/turtle')
+        except IOError:
+            pass
+        else:
+            raise AttributeError(id)
+
+        prefixes = self.agora.fountain.prefixes
+        types = map(lambda t: URIRef(extend_uri(t, prefixes)), types)
         td = TD.from_types(id, types)
         try:
-            response = self._post_request('descriptions', td.to_graph().serialize(format='turtle'),
+            response = self._post_request('descriptions', td.to_graph(th_nodes={}).serialize(format='turtle'),
                                           content_type='text/turtle',
                                           accept='text/turtle')
 
@@ -116,7 +126,11 @@ class EcoGatewayClient(Client, AbstractEcoGateway):
         raise AttributeError(id)
 
     def get_description(self, tdid, fetch=True):
-        response = self._get_request('descriptions/{}'.format(tdid), accept='text/turtle')
+        try:
+            response = self._get_request('descriptions/{}'.format(tdid), accept='text/turtle')
+        except IOError as e:
+            raise AttributeError(e.message['text'])
+
         g = Graph()
         g.parse(StringIO(response), format='turtle')
         g = deskolemize(g)
@@ -132,6 +146,15 @@ class EcoGatewayClient(Client, AbstractEcoGateway):
             raise AttributeError(e.message['text'])
 
     def add_resource(self, uri, types):
+        response = self._get_request('resources', accept='text/turtle')
+
+        g = Graph()
+        g.parse(StringIO(response), format='turtle')
+        if URIRef(uri) in set(g.subjects()):
+            raise AttributeError(uri)
+
+        prefixes = self.agora.fountain.prefixes
+        types = map(lambda t: URIRef(extend_uri(t, prefixes)), types)
         r = Resource(URIRef(uri), types)
         try:
             response = self._post_request('descriptions', r.to_graph().serialize(format='turtle'),

@@ -325,3 +325,6 @@ class EcoGateway(AbstractEcoGateway):
         gw.VTED = VTED(gw.repository)
 
         return gw
+
+    def close(self):
+        self.agora.shutdown()
