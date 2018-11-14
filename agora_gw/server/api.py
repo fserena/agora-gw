@@ -20,6 +20,7 @@ import traceback
 
 from agora.engine.fountain.onto import DuplicateVocabulary
 from agora.server import HTML
+from agora.server.planner import make_plan as mk
 from agora_wot.utils import bound_graph
 from flask import Flask, request, jsonify, make_response, url_for
 from flask_negotiate import produces, consumes
@@ -169,7 +170,7 @@ def get_td(gw):
             response = make_response(ttl)
             response.headers['Content-Type'] = format
             return response
-        except IndexError:
+        except (IndexError, AttributeError):
             pass
 
         response = make_response()
@@ -337,6 +338,26 @@ def delete_resource(gw):
     return _delete_resource
 
 
+def make_plan(gw):
+    def _make_plan():
+        try:
+            req_args = request.args
+            agp_str = req_args.get('agp', '{}')
+            ted = gw.discover("SELECT * WHERE %s" % agp_str, lazy=False)
+            seeds = ted.typed_seeds
+            plan_ttl = mk(gw.agora.planner, agp_str, seeds)
+            response = make_response(plan_ttl)
+            response.headers['Content-Type'] = 'text/turtle'
+            return response
+        except Exception as e:
+            response = make_response(e.message)
+            response.status_code = 400
+
+            return response
+
+    return _make_plan
+
+
 def build(name, gw=None, **kwargs):
     if gw is None:
         gw = Gateway(**kwargs)
@@ -348,6 +369,7 @@ def build(name, gw=None, **kwargs):
     app.route('/descriptions/<id>')(get_td(gw))
     app.route('/descriptions/<id>', methods=['DELETE'])(delete_td(gw))
     app.route('/ted')(get_ted(gw))
+    app.route('/plan')(make_plan(gw))
     app.route('/discover', methods=['POST'])(discover(gw))
     app.route('/descriptions')(get_descriptions(gw))
     app.route('/descriptions', methods=['POST'])(learn_descriptions(gw))
