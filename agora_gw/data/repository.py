@@ -140,6 +140,7 @@ class Repository(object):
 
     @property
     def sparql(self):
+        # type: () -> SPARQL
         return self._sparql
 
     @property
@@ -323,7 +324,8 @@ class Repository(object):
 
     def shutdown(self):
         try:
-            Agora.close()
+            self.agora.shutdown()
+            self.sparql.shutdown()
         except Exception:
             pass
 

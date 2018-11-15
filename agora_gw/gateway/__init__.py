@@ -318,3 +318,5 @@ class Gateway(object):
 
     def close(self):
         self.__close_eco()
+        if self.__cache is not None:
+            self.__cache.r.shutdown()

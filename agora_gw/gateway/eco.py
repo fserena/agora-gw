@@ -327,4 +327,4 @@ class EcoGateway(AbstractEcoGateway):
         return gw
 
     def close(self):
-        self.agora.shutdown()
+        self.repository.shutdown()

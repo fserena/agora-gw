@@ -99,7 +99,6 @@ def _query(q, cache=None, infer=True, expire=QUERY_CACHE_EXPIRE, namespace=None,
         try:
             results = sparql.query().convert()
         except Exception as e:
-            print q, e.message
             raise e
 
         if isinstance(results, str):
@@ -173,6 +172,9 @@ class SPARQL(object):
                 self.cache.flush_namespace(namespace)
             else:
                 self.cache.connection.flushdb()
+
+    def shutdown(self):
+        self.cache.connection.shutdown()
 
 
 class SimpleCache(BaseSimpleCache):
