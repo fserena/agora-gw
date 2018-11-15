@@ -369,7 +369,7 @@ def build(name, gw=None, **kwargs):
     app.route('/descriptions/<id>')(get_td(gw))
     app.route('/descriptions/<id>', methods=['DELETE'])(delete_td(gw))
     app.route('/ted')(get_ted(gw))
-    app.route('/plan')(make_plan(gw))
+    app.route('/ecoplan')(make_plan(gw))
     app.route('/discover', methods=['POST'])(discover(gw))
     app.route('/descriptions')(get_descriptions(gw))
     app.route('/descriptions', methods=['POST'])(learn_descriptions(gw))
