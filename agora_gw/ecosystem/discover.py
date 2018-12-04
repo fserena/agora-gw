@@ -22,9 +22,9 @@ from collections import defaultdict
 import networkx as nx
 from agora.engine.plan import AGP, TP, find_root_types
 from agora.engine.plan.agp import extend_uri
-from rdflib import RDF, Variable, BNode
+from rdflib import RDF, Variable, BNode, URIRef
 
-from agora_gw.ecosystem.description import build_component, build_TED
+from agora_gw.ecosystem.description import build_component, build_TED, QUERY_CACHE_EXPIRE, build_enrichment
 
 __author__ = 'Fernando Serena'
 
@@ -280,17 +280,30 @@ def make_up_bgp_query(q, predicate_mask, bgp_cache=None):
 def transform_into_specific_queries(R, id, q, bgp_cache=None):
     desc_predicates = R.thing_describing_predicates(id)
 
-    td_q = """SELECT DISTINCT * WHERE { GRAPH <%s> { %s  %s } }"""
-    for tps_str, filter_clause in make_up_bgp_query(q, desc_predicates, bgp_cache=bgp_cache):
-        yield td_q % (id, tps_str, filter_clause)
+    if desc_predicates:
+        td_q = """SELECT DISTINCT * WHERE { GRAPH <%s> { %s  %s } }"""
+        for tps_str, filter_clause in make_up_bgp_query(q, desc_predicates, bgp_cache=bgp_cache):
+            yield td_q % (id, tps_str, filter_clause)
 
 
 def transform_into_graph_td_queries(R, q, bgp_cache=None):
     desc_predicates = R.describing_predicates
 
-    td_q = """SELECT DISTINCT ?g { GRAPH ?g { %s  %s } }"""
-    for tps_str, filter_clause in make_up_bgp_query(q, desc_predicates, bgp_cache=bgp_cache):
-        yield td_q % (tps_str, filter_clause)
+    if desc_predicates:
+        td_q = """SELECT DISTINCT ?g { GRAPH ?g { %s  %s } }"""
+        for tps_str, filter_clause in make_up_bgp_query(q, desc_predicates, bgp_cache=bgp_cache):
+            yield td_q % (tps_str, filter_clause)
+
+
+def type_enrichments(R, t):
+    res = R.query("""
+    PREFIX map: <http://iot.linkeddata.es/def/wot-mappings#>
+    SELECT DISTINCT ?e WHERE {
+        ?e a map:Enrichment ;
+           map:instancesOf <%s>               
+    }""" % t, cache=True, infer=True, expire=QUERY_CACHE_EXPIRE)
+    enrichments = map(lambda r: URIRef(r['e']['value']), res)
+    return enrichments
 
 
 def discover_ecosystem(R, VTED, q, reachability=False, lazy=False):
@@ -343,4 +356,10 @@ def discover_ecosystem(R, VTED, q, reachability=False, lazy=False):
     log.debug('Building TED of the discovered ecosystem...')
     ted = build_TED(components.values())
 
+    non_td_root_types = reduce(lambda x, y: x.union(y), map(lambda r: r.types, ted.ecosystem.non_td_root_resources),
+                               set())
+    for t in non_td_root_types:
+        for e_uri in type_enrichments(R, t):
+            e = build_enrichment(R, VTED, e_uri, node_map=node_map, lazy=lazy)
+            ted.ecosystem.add_enrichment(e)
     return ted

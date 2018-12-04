@@ -25,12 +25,14 @@ from multiprocessing import Lock
 
 import networkx as nx
 from agora.engine.plan.agp import extend_uri
-from agora_wot.blocks.eco import request_loader, Ecosystem
+from agora_wot.blocks.eco import request_loader, Ecosystem, Enrichment
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
+from agora_wot.ns import MAP
 from rdflib import BNode, URIRef, Graph, RDF, RDFS
 
+from agora_gw.data import Repository
 from agora_gw.data.graph import canonize_node
 from agora_gw.data.repository import CORE
 
@@ -151,6 +153,21 @@ def get_matching_TD(R, th_uri, node_map={}, **kwargs):
     return create_TD_from(R, td_uri, node_map, **kwargs)
 
 
+def build_enrichment(R, VTED, e_uri, node_map={}, lazy=True):
+    e_g = R.pull(e_uri)
+
+    loader = None if lazy else R.pull
+
+    try:
+        td_uri = list(e_g.objects(URIRef(e_uri), MAP.resourcesEnrichedBy)).pop()
+        create_TD_from(R, td_uri, node_map, loader=loader, lazy=lazy)
+    except IndexError:
+        pass
+
+    e = Enrichment.from_graph(e_g, node=e_uri, node_map=node_map)
+    return e
+
+
 def build_component(R, VTED, id, node_map=None, lazy=True):
     if node_map is None:
         node_map = {}
@@ -222,12 +239,14 @@ def learn_descriptions_from(R, desc_g):
 
     candidate_th_nodes = set(desc_g.subjects(RDF.type)).difference(td_nodes)
     for cand_th_node in candidate_th_nodes:
-        if not list(desc_g.triples((None, None, cand_th_node))):
+        candidate_th_types = list(desc_g.objects(cand_th_node, RDF.type))
+        if not any(map(lambda t: t.startswith(CORE) or t.startswith(MAP), candidate_th_types)) and not list(
+                desc_g.triples((None, None, cand_th_node))):
             desc_g.add((virtual_eco_node, CORE.hasComponent, cand_th_node))
 
     desc_g.add((virtual_eco_node, RDF.type, CORE.Ecosystem))
     eco = Ecosystem.from_graph(desc_g, loader=get_context(R))
-    g = eco.to_graph()
+    g = eco.to_graph(node=virtual_eco_node)
 
     node_map = {}
     sub_eco = Ecosystem()
@@ -246,6 +265,15 @@ def learn_descriptions_from(R, desc_g):
         except IndexError:
             skolem_id = None
         g = canonize_node(g, th_node, R.base, id='things/{}'.format(skolem_id))
+
+    enr_nodes = g.subjects(predicate=RDF.type, object=MAP.Enrichment)
+    for e_node in enr_nodes:
+        try:
+            skolem_id = list(g.objects(e_node, CORE.identifier)).pop()
+        except IndexError:
+            skolem_id = None
+        g = canonize_node(g, e_node, R.base, id='enrichments/{}'.format(skolem_id))
+        desc_g = canonize_node(desc_g, e_node, R.base, id='enrichments/{}'.format(skolem_id))
 
     td_nodes = g.subjects(RDF.type, CORE.ThingDescription)
     for node in td_nodes:
@@ -270,6 +298,11 @@ def learn_descriptions_from(R, desc_g):
 
     for r_uri, types in non_td_resources.items():
         sub_eco.add_root(Resource(uri=r_uri, types=types))
+
+    en_nodes = list(desc_g.subjects(RDF.type, MAP.Enrichment))
+    for e_node in en_nodes:
+        e = Enrichment.from_graph(desc_g, e_node, node_map)
+        sub_eco.add_enrichment(e)
 
     ted = TED()
     ted.ecosystem = sub_eco
@@ -361,6 +394,7 @@ def materialize_th_types(R, ids):
 
 class VTED(object):
     def __init__(self, R):
+        # type: (Repository) -> VTED
         self.R = R
 
     def __sync_VTED(self, force=False):
@@ -369,6 +403,7 @@ class VTED(object):
             log.info('[{}] Syncing VTED...'.format(ts))
             META['network'] = self._network(cache=not force)
             META['roots'] = self._roots(cache=not force)
+            META['enrichments'] = self._enrichments(cache=not force)
             td_th_ids = set(map(lambda x: x[2], get_td_ids(self.R, cache=not force)))
             root_ids = set(map(lambda x: x[0], META['roots']))
             materialize_th_types(self.R, td_th_ids.union(root_ids))
@@ -433,6 +468,15 @@ class VTED(object):
         roots = map(lambda r: (r['root']['value'], r.get('td', {}).get('value', None)), res)
         return roots
 
+    def _enrichments(self, cache=True):
+        res = self.R.query("""
+        PREFIX map: <http://iot.linkeddata.es/def/wot-mappings#>
+        SELECT DISTINCT ?e WHERE {
+            ?e a map:Enrichment               
+        }""", cache=cache, infer=False, expire=QUERY_CACHE_EXPIRE, namespace='eco')
+        enrichments = map(lambda r: r['e']['value'], res)
+        return enrichments
+
     def ted_eco(self):
         try:
             res = self.R.query("""
@@ -453,17 +497,28 @@ class VTED(object):
         td_nodes = {td: td.node for td in ted.ecosystem.tds}
         last_td_based_roots = set([URIRef(root_uri) for (root_uri, td) in self._roots(cache=False) if td and root_uri])
 
-        for td in ted.ecosystem.tds:
+        tds = list(ted.ecosystem.tds)
+        for td in tds:
             self.R.push(td.to_graph(td_nodes=td_nodes))
             self.R.push(th_graph_builder(td))
+
+        if tds:
+            self.sync(force=True)
 
         try:
             ted_uri, eco = self.ted_eco()
         except EnvironmentError:
-            self.R.push(ted.to_graph(node=eco_uri, abstract=True))
-            ted_uri, eco = self.ted_eco()
-        finally:
+            ted_g = ted.to_graph(node=eco_uri, abstract=True)
+            ted_g.remove((None, CORE.implements, None)) # Links to map:Enrichment's are unwanted here
+            self.R.push(ted_g)
             self.sync(force=True)
+            ted_uri, eco = self.ted_eco()
+
+        enrichments = list(ted.ecosystem.enrichments)
+        if enrichments:
+            for e in ted.ecosystem.enrichments:
+                e_graph = e.to_graph(td_nodes=td_nodes)
+                self.R.push(e_graph)
 
         network_roots = set(map(lambda (n, _): URIRef(get_th_node(self.R, n)),
                                 filter(lambda (n, degree): degree == 0, dict(self.network.in_degree()).items())))
@@ -485,5 +540,5 @@ class VTED(object):
         for root in obsolete_td_based_roots:
             self.remove_component(ted_uri, root)
 
-        self.sync(force=True)
         self.R.expire_cache()
+        self.sync(force=True)

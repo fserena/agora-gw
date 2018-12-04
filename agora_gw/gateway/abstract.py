@@ -109,6 +109,18 @@ class AbstractEcoGateway(object):
         raise NotImplementedError
 
     @abstractmethod
+    def add_enrichment(self, id, type, tdid, replace=False):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_enrichment(self, id):
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_enrichment(self, id):
+        raise NotImplementedError
+
+    @abstractmethod
     def get_thing(self, tid):
         # type: (str) -> Resource
         raise NotImplementedError

@@ -21,11 +21,11 @@ from StringIO import StringIO
 from agora import Agora
 from agora.engine.plan.agp import extend_uri
 from agora.server import Client
-from agora_wot.blocks.eco import request_loader
+from agora_wot.blocks.eco import request_loader, Enrichment
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
-from rdflib import Graph, RDF, URIRef
+from rdflib import Graph, RDF, URIRef, Literal
 
 from agora_gw.data.graph import deskolemize
 from agora_gw.data.repository import CORE
@@ -182,6 +182,54 @@ class EcoGatewayClient(Client, AbstractEcoGateway):
         g = Graph()
         g.parse(StringIO(response), format='turtle')
         return Resource(URIRef(uri), types=list(g.objects(URIRef(uri), RDF.type)))
+
+    def add_enrichment(self, id, type, tdid, replace=False):
+        try:
+            self._get_request('enrichments/{}'.format(id), accept='text/turtle')
+        except IOError:
+            pass
+        else:
+            # Already exists
+            raise AttributeError(id)
+
+        try:
+            response = self._get_request('descriptions/{}'.format(tdid), accept='text/turtle')
+        except IOError:
+            # TD does not exist
+            raise AttributeError(tdid)
+
+        g = Graph()
+        g.parse(StringIO(response), format='turtle')
+        try:
+            td_uri = list(g.subjects(CORE.identifier, Literal(tdid))).pop()
+            td = TD.from_graph(g, td_uri, node_map={})
+        except IndexError:
+            # Something wrong happens with the TD RDF
+            raise AttributeError(tdid)
+
+        prefixes = self.agora.fountain.prefixes
+        type = URIRef(extend_uri(type, prefixes))
+        e = Enrichment(id, type, td, replace=replace)
+        try:
+            response = self._post_request('descriptions', e.to_graph().serialize(format='turtle'),
+                                          content_type='text/turtle',
+                                          accept='text/turtle')
+            g = Graph()
+            g.parse(StringIO(response), format='turtle')
+            ted = TED.from_graph(g, loader=self.__loader)
+            all_enrichments = ted.ecosystem.enrichments
+            if all_enrichments:
+                return list(all_enrichments).pop()
+        except IOError as e:
+            raise AttributeError(e.message['text'])
+
+        raise AttributeError(id)
+
+    def get_enrichment(self, id):
+        pass
+
+    def delete_enrichment(self, id):
+        pass
 
     @property
     def resources(self):

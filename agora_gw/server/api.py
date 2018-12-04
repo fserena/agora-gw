@@ -21,6 +21,7 @@ import traceback
 from agora.engine.fountain.onto import DuplicateVocabulary
 from agora.server import HTML
 from agora.server.planner import make_plan as mk
+from agora_wot.ns import MAP
 from agora_wot.utils import bound_graph
 from flask import Flask, request, jsonify, make_response, url_for
 from flask_negotiate import produces, consumes
@@ -137,13 +138,16 @@ def learn_descriptions(gw):
     def _learn_descriptions():
         descriptions = request.data
         try:
+            own_base = unicode(request.url_root)
+            canonical_base = gw.repository.base.rstrip('/') + u'/'
+            descriptions = descriptions.decode('utf-8').replace(own_base, canonical_base)
             g = deserialize(descriptions, format=request.content_type)
+
             ted = gw.learn_descriptions(g, ted_path=url_for('_get_ted'))
             format = TURTLE if request_wants_turtle() else JSONLD
             ted_str = serialize_TED(ted, format, prefixes=gw.repository.fountain.prefixes)
 
-            own_base = unicode(request.url_root)
-            ted_str = ted_str.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
+            ted_str = ted_str.decode('utf-8').replace(canonical_base, own_base)
             response = make_response(ted_str)
             response.headers['Content-Type'] = format
             return response
@@ -204,7 +208,7 @@ def get_ted(gw):
         try:
             local_node = URIRef(url_for('_get_ted', _external=True))
             ted = gw.get_ted(ted_uri=local_node, fountain=fountain, lazy=True)
-            g = ted.to_graph(node=local_node, fetch=False)
+            g = ted.to_graph(node=local_node, fetch=False, abstract=True)
 
             format = TURTLE if request_wants_turtle() else JSONLD
 
@@ -275,17 +279,35 @@ def get_resources(gw):
     return _get_resources
 
 
+def get_enrichments(gw):
+    def _get_enrichments():
+        all_enrichments = gw.enrichments
+        g = prefixed_graph(gw)
+        for e in all_enrichments:
+            e.to_graph(graph=g)
+
+        own_base = unicode(request.url_root)
+        format = TURTLE if request_wants_turtle() else JSONLD
+        ttl = serialize_graph(g, format, frame=MAP.Enrichment)
+        ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
+        response = make_response(ttl)
+        response.headers['Content-Type'] = format
+        return response
+
+    return _get_enrichments
+
+
 def get_descriptions(gw):
     def _get_descriptions():
         all_descriptions = gw.descriptions
-        g = Graph()
+        g = prefixed_graph(gw)
         for td in all_descriptions:
             g.add((td.node, RDF.type, CORE.ThingDescription))
             g.add((td.node, CORE.describes, td.resource.node))
 
         own_base = unicode(request.url_root)
         format = TURTLE if request_wants_turtle() else JSONLD
-        ttl = serialize_graph(g, format)
+        ttl = serialize_graph(g, format, frame=CORE.ThingDescription)
         ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
         response = make_response(ttl)
         response.headers['Content-Type'] = format
@@ -321,6 +343,30 @@ def get_resource(gw):
     return _get_resource
 
 
+def get_enrichment(gw):
+    def _get_enrichment(id):
+        try:
+            g = gw.get_enrichment(id).to_graph(graph=prefixed_graph(gw))
+            format = TURTLE if request_wants_turtle() else JSONLD
+            ttl = serialize_graph(g, format, frame=MAP.Enrichment)
+
+            own_base = unicode(request.url_root)
+            ttl = ttl.decode('utf-8').replace(gw.repository.base.rstrip('/') + u'/', own_base)
+            response = make_response(ttl)
+            response.headers['Content-Type'] = format
+            return response
+        except (IndexError, AttributeError):
+            traceback.print_exc()
+            pass
+
+        response = make_response()
+        response.status_code = 404
+
+        return response
+
+    return _get_enrichment
+
+
 def delete_resource(gw):
     def _delete_resource(uri):
         try:
@@ -336,6 +382,23 @@ def delete_resource(gw):
         return response
 
     return _delete_resource
+
+
+def delete_enrichment(gw):
+    def _delete_enrichment(id):
+        try:
+            gw.delete_enrichment(id)
+            response = make_response()
+            return response
+        except (IndexError, AttributeError):
+            pass
+
+        response = make_response()
+        response.status_code = 404
+
+        return response
+
+    return _delete_enrichment
 
 
 def make_plan(gw):
@@ -365,6 +428,9 @@ def build(name, gw=None, **kwargs):
     app.route('/resources')(get_resources(gw))
     app.route('/resources/<path:uri>')(get_resource(gw))
     app.route('/resources/<path:uri>', methods=['DELETE'])(delete_resource(gw))
+    app.route('/enrichments')(get_enrichments(gw))
+    app.route('/enrichments/<id>')(get_enrichment(gw))
+    app.route('/enrichments/<id>', methods=['DELETE'])(delete_enrichment(gw))
     app.route('/things/<id>')(get_thing(gw))
     app.route('/descriptions/<id>')(get_td(gw))
     app.route('/descriptions/<id>', methods=['DELETE'])(delete_td(gw))

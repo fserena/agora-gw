@@ -22,7 +22,7 @@ from agora_wot.blocks.td import TD
 from agora_wot.gateway import DataGateway
 
 from agora_gw.gateway.add import add_access_mapping, add_mapping
-from agora_gw.gateway.delete import delete_access_mapping, delete_mapping
+from agora_gw.gateway.delete import delete_access_mapping, delete_mapping, delete_enrichment
 from agora_gw.gateway.eco import EcoGateway, AbstractEcoGateway
 from agora_gw.gateway.errors import GatewayError, NotFoundError, ConflictError
 
@@ -192,11 +192,15 @@ class Gateway(object):
     def resources(self):
         return self.__eco.resources
 
+    @property
+    def enrichments(self):
+        return self.__eco.enrichments
+
     def get_resource(self, uri):
         try:
             return self.__eco.get_resource(uri)
         except AttributeError:
-            raise NotFoundError(id)
+            raise NotFoundError(uri)
         except Exception as e:
             raise GatewayError(e.message)
 
@@ -276,6 +280,33 @@ class Gateway(object):
         except Exception as e:
             raise GatewayError(e.message)
 
+    def add_enrichment(self, id, type, td_id, replace=False):
+        try:
+            return self.__eco.add_enrichment(id, type, td_id, replace=replace)
+        except AttributeError as e:
+            if e.message == td_id:
+                raise NotFoundError(td_id)
+            else:
+                raise ConflictError(id)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def get_enrichment(self, id):
+        try:
+            return self.__eco.get_enrichment(id)
+        except AttributeError:
+            raise NotFoundError(id)
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def delete_enrichment(self, id):
+        try:
+            self.__eco.delete_enrichment(id)
+        except AttributeError:
+            raise NotFoundError(id)
+        except Exception as e:
+            raise GatewayError(e.message)
+
     def delete_access_mapping(self, id, amid):
         try:
             delete_access_mapping(self.__eco, id, amid)
@@ -296,6 +327,14 @@ class Gateway(object):
     def delete_mapping(self, id, mid):
         try:
             return delete_mapping(self.__eco, id, mid)
+        except GatewayError:
+            raise
+        except Exception as e:
+            raise GatewayError(e.message)
+
+    def delete_enrichment(self, id):
+        try:
+            return self.__eco.delete_enrichment(id)
         except GatewayError:
             raise
         except Exception as e:

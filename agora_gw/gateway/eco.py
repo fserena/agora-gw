@@ -20,6 +20,7 @@ from multiprocessing import Lock
 
 from agora import Agora
 from agora.engine.plan.agp import extend_uri
+from agora_wot.blocks.eco import Enrichment
 from agora_wot.blocks.resource import Resource
 from agora_wot.blocks.td import TD
 from agora_wot.blocks.ted import TED
@@ -146,7 +147,7 @@ class EcoGateway(AbstractEcoGateway):
     def add_resource(self, uri, types):
         # type: (basestring, iter) -> TED
         ted = self.ted
-        matching_resources = filter(lambda r: r.node.toPython() == uri, self.ted.ecosystem.non_td_root_resources)
+        matching_resources = filter(lambda r: r.node.toPython() == uri, ted.ecosystem.non_td_root_resources)
         if not matching_resources:
             agora = self.agora
             if not all([t in agora.fountain.types for t in types]):
@@ -219,6 +220,54 @@ class EcoGateway(AbstractEcoGateway):
     def resources(self):
         # type: () -> frozenset[Resource]
         return self.ted.ecosystem.non_td_root_resources
+
+    @property
+    def enrichments(self):
+        # type: () -> frozenset[Enrichment]
+        return self.ted.ecosystem.enrichments
+
+    def add_enrichment(self, id, type, td_id, replace=False):
+        # type: (basestring, basestring, basestring, bool) -> Enrichment
+        ted = self.ted
+        matching_enrichments = filter(lambda e: str(e.id) == str(id), ted.ecosystem.enrichments)
+        if not matching_enrichments:
+            agora = self.agora
+            if type not in agora.fountain.types:
+                raise TypeError('Unknown type')
+
+            prefixes = agora.fountain.prefixes
+
+            type_uri = extend_uri(type, prefixes)
+
+            td = self.get_description(td_id)
+
+            try:
+                e = Enrichment(id, type_uri, td, replace=replace)
+                g = e.to_graph(td_nodes={})
+                self.learn_descriptions(g)
+            except AttributeError:
+                raise AttributeError(id)
+
+            return e
+        else:
+            raise AttributeError(id)
+
+    def get_enrichment(self, id):
+        # type: (basestring) -> Enrichment
+        matching_enrichments = filter(lambda r: r.id.toPython() == str(id), self.ted.ecosystem.enrichments)
+        if matching_enrichments:
+            return matching_enrichments.pop()
+        else:
+            raise AttributeError(id)
+
+    def delete_enrichment(self, id):
+        # type: (basestring) -> None
+        matching_enrichments = filter(lambda r: r.id.toPython() == str(id), self.ted.ecosystem.enrichments)
+        if matching_enrichments:
+            e = matching_enrichments.pop()
+            self.repository.delete(e.node)
+        else:
+            raise AttributeError(uri)
 
     def __loader(self):
         def wrapper(*args, **kwargs):
@@ -298,10 +347,15 @@ class EcoGateway(AbstractEcoGateway):
                     g.__iadd__(r.to_graph(abstract=True, fetch=False))
                 g.add((ted.ecosystem.node, CORE.hasComponent, root_uri))
 
+        for e_uri in self.VTED.enrichments:
+            e_uri = URIRef(e_uri)
+            e_g = self.repository.pull(e_uri)
+            g.__iadd__(e_g)
+
         for prefix, ns in fountain.prefixes.items():
             g.bind(prefix, ns)
 
-        ted = TED.from_graph(g, fetch=not lazy, loader=None if lazy else self.repository.pull)
+        ted = TED.from_graph(g, fetch=not lazy, loader=self.repository.pull)
         return ted
 
     def __new__(cls, **kwargs):
