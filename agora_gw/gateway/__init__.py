@@ -22,7 +22,7 @@ from agora_wot.blocks.td import TD
 from agora_wot.gateway import DataGateway
 
 from agora_gw.gateway.add import add_access_mapping, add_mapping
-from agora_gw.gateway.delete import delete_access_mapping, delete_mapping, delete_enrichment
+from agora_gw.gateway.delete import delete_access_mapping, delete_mapping
 from agora_gw.gateway.eco import EcoGateway, AbstractEcoGateway
 from agora_gw.gateway.errors import GatewayError, NotFoundError, ConflictError
 
